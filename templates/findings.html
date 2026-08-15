@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}Findings - Vigilance SOC{% endblock %}
+{% block header_title %}Findings Explorer{% endblock %}
+
+{% block content %}
+<section class="glacier-card flex flex-col overflow-hidden h-[calc(100vh-140px)] min-h-[500px]">
+    <div class="p-6 border-b border-white/40 flex justify-between items-center bg-white/20">
+        <h3 class="text-sm font-semibold text-slate-800 tracking-wider uppercase">All Findings</h3>
+    </div>
+    <div class="flex-1 overflow-auto p-4">
+        <table class="w-full text-left text-sm border-separate border-spacing-y-3">
+            <thead class="text-xs text-slate-500 uppercase tracking-wider sticky top-0 bg-transparent z-10">
+                <tr>
+                    <th class="pb-3 px-2 font-semibold w-6"></th>
+                    <th class="pb-3 px-4 font-semibold">CVE</th>
+                    <th class="pb-3 px-4 font-semibold">Tool</th>
+                    <th class="pb-3 px-4 font-semibold">Asset</th>
+                    <th class="pb-3 px-4 font-semibold">Description</th>
+                    <th class="pb-3 px-4 font-semibold text-right">Detected On</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for finding in findings %}
+                <tr class="glacier-recessed-sm bg-white/30 hover:bg-white/60 transition-colors">
+                    <td class="py-4 px-2 rounded-l-xl">
+                        {% if finding.severity == 'Critical' or finding.severity == 'High' %}
+                        <div class="w-1.5 h-10 bg-glacier-red rounded-full mx-auto shadow-[0_0_8px_rgba(239,68,68,0.5)]"></div>
+                        {% elif finding.severity == 'Medium' %}
+                        <div class="w-1.5 h-10 bg-glacier-yellow rounded-full mx-auto shadow-[0_0_8px_rgba(245,158,11,0.5)]"></div>
+                        {% else %}
+                        <div class="w-1.5 h-10 bg-slate-400 rounded-full mx-auto"></div>
+                        {% endif %}
+                    </td>
+                    <td class="py-4 px-4 font-mono text-xs {% if finding.severity == 'Critical' or finding.severity == 'High' %}text-glacier-red{% elif finding.severity == 'Medium' %}text-glacier-yellow{% else %}text-slate-500{% endif %} font-medium">
+                        {{ finding.cve }}
+                        {% if finding.is_auto_fail %}
+                        <span class="ml-1 px-1.5 py-0.5 rounded bg-glacier-red text-white text-[10px] font-bold uppercase" title="PCI DSS automatic-fail condition">Auto-Fail</span>
+                        {% endif %}
+                    </td>
+                    <td class="py-4 px-4 text-xs text-slate-500 uppercase">{{ finding.source_tool }}</td>
+                    <td class="py-4 px-4 font-mono text-xs text-slate-700 bg-slate-100/50 my-2 rounded-md inline-block mt-3 border border-white">{{ finding.asset.hostname or finding.asset.ip_address }}</td>
+                    <td class="py-4 px-4 text-xs text-slate-600 truncate max-w-[300px]" title="{{ finding.description }}">{{ finding.description }}</td>
+                    <td class="py-4 px-4 text-right font-mono text-xs text-slate-500 rounded-r-xl">
+                        {{ finding.created_at.strftime('%Y-%m-%d %H:%M') if finding.created_at else '--:--' }}
+                    </td>
+                </tr>
+                {% else %}
+                <tr><td colspan="6" class="py-4 px-4 text-slate-500 text-center">No findings</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+{% endblock %}

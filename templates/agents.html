@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Agents - Vigilance SOC{% endblock %}
+{% block header_title %}Agent Management{% endblock %}
+
+{% block content %}
+<section class="glacier-card flex flex-col overflow-hidden h-[calc(100vh-140px)] min-h-[500px]">
+    <div class="p-6 border-b border-white/40 flex justify-between items-center bg-white/20">
+        <h3 class="text-sm font-semibold text-slate-800 tracking-wider uppercase">Deployed Agents</h3>
+    </div>
+    <div class="flex-1 overflow-auto p-4">
+        <table class="w-full text-left text-sm border-separate border-spacing-y-3">
+            <thead class="text-xs text-slate-500 uppercase tracking-wider sticky top-0 bg-transparent z-10">
+                <tr>
+                    <th class="pb-3 px-4 font-semibold">Name</th>
+                    <th class="pb-3 px-4 font-semibold">Type</th>
+                    <th class="pb-3 px-4 font-semibold">Status</th>
+                    <th class="pb-3 px-4 font-semibold text-right">Last Seen</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for agent in agents %}
+                <tr class="glacier-recessed-sm group hover:bg-white/60 transition-colors">
+                    <td class="py-4 px-4 font-medium text-slate-600 rounded-l-xl">{{ agent.name }}</td>
+                    <td class="py-4 px-4 text-xs text-slate-600 capitalize">{{ agent.type }}</td>
+                    <td class="py-4 px-4 flex items-center gap-2">
+                        {% if agent.status == 'online' %}
+                        <span class="relative flex h-2.5 w-2.5">
+                            <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-glacier-green opacity-75"></span>
+                            <span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-glacier-green shadow-[0_0_8px_rgba(16,185,129,0.5)]"></span>
+                        </span>
+                        <span class="text-glacier-green font-medium text-xs">Online</span>
+                        {% else %}
+                        <span class="w-2.5 h-2.5 rounded-full bg-slate-400"></span>
+                        <span class="text-slate-500 text-xs">Offline</span>
+                        {% endif %}
+                    </td>
+                    <td class="py-4 px-4 text-right font-mono text-xs text-slate-500 rounded-r-xl">
+                        {{ agent.last_seen.strftime('%Y-%m-%d %H:%M:%S') }}
+                    </td>
+                </tr>
+                {% else %}
+                <tr><td colspan="4" class="py-4 px-4 text-slate-500 text-center">No agents deployed.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+{% endblock %}

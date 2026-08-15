@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Reports - Vigilance SOC{% endblock %}
+{% block header_title %}Reports{% endblock %}
+
+{% block content %}
+<section class="glacier-card flex flex-col overflow-hidden h-[calc(100vh-140px)] min-h-[500px]">
+    <div class="p-6 border-b border-white/40 flex justify-between items-center bg-white/20">
+        <h3 class="text-sm font-semibold text-slate-800 tracking-wider uppercase">Generated Reports</h3>
+        <form action="{{ url_for('main.generate_report') }}" method="POST" class="flex gap-3">
+            <select name="format" class="glacier-recessed-sm text-slate-700 text-xs px-3 py-1.5 outline-none border-none focus:ring-1 focus:ring-glacier-blue/50">
+                <option value="csv">CSV Format</option>
+                <option value="pdf">PDF Format</option>
+            </select>
+            <button type="submit" class="px-4 py-1.5 text-xs font-semibold tracking-wider text-slate-700 glacier-btn rounded-lg uppercase">
+                Generate
+            </button>
+        </form>
+    </div>
+    <div class="flex-1 overflow-auto p-4">
+        <table class="w-full text-left text-sm border-separate border-spacing-y-3">
+            <thead class="text-xs text-slate-500 uppercase tracking-wider sticky top-0 bg-transparent z-10">
+                <tr>
+                    <th class="pb-3 px-4 font-semibold">Type</th>
+                    <th class="pb-3 px-4 font-semibold">Format</th>
+                    <th class="pb-3 px-4 font-semibold">Status</th>
+                    <th class="pb-3 px-4 font-semibold text-right">Date</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for report in reports %}
+                <tr class="glacier-recessed-sm group hover:bg-white/60 transition-colors">
+                    <td class="py-4 px-4 font-medium text-slate-600 rounded-l-xl">{{ report.type }}</td>
+                    <td class="py-4 px-4 font-mono text-xs text-slate-600 uppercase">{{ report.format }}</td>
+                    <td class="py-4 px-4 text-xs text-slate-600 capitalize">
+                        <span class="px-2.5 py-1 text-[10px] font-bold text-glacier-green border border-glacier-green/30 rounded-md bg-glacier-green/10 uppercase tracking-wide">{{ report.status }}</span>
+                    </td>
+                    <td class="py-4 px-4 text-right font-mono text-xs text-slate-500 rounded-r-xl">
+                        {{ report.created_at.strftime('%Y-%m-%d %H:%M') }}
+                    </td>
+                </tr>
+                {% else %}
+                <tr><td colspan="4" class="py-4 px-4 text-slate-500 text-center">No reports generated yet.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+{% endblock %}

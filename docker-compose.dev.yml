@@ -1,0 +1,20 @@
+# Dev-only overrides: expose infra ports to the host so the app and
+# Celery worker can run locally (with hot-reload) against these containers.
+
+services:
+  db:
+    ports:
+      - "${DB_PORT:-5433}:5432"
+
+  redis:
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+
+  openvas:
+    ports:
+      - "9390:9390"
+      - "9392:9392"
+
+  zap:
+    ports:
+      - "8090:8090"

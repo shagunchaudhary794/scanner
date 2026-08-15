@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}New Scan - Vigilance SOC{% endblock %}
+{% block header_title %}Create Scan{% endblock %}
+
+{% block content %}
+<section class="glacier-card p-8 max-w-2xl mx-auto mt-6">
+    <form method="POST" action="/scans/new" class="flex flex-col gap-6">
+        
+        <div class="flex flex-col gap-1.5">
+            <label class="text-xs font-semibold text-slate-500 tracking-wider uppercase">Scan Type *</label>
+            <select name="type" required class="glacier-recessed-sm text-slate-700 text-sm px-4 py-3 outline-none border-none focus:ring-2 focus:ring-glacier-blue/50 w-full">
+                <option value="internal">Internal (via Presence Agent)</option>
+                <option value="external">External (Internet-facing)</option>
+            </select>
+            <div class="text-xs text-slate-500 mt-1">Select the execution path. Internal scans require a running presence agent on the target network.</div>
+        </div>
+        
+        <div class="flex flex-col gap-1.5 mt-2">
+            <label class="text-xs font-semibold text-slate-500 tracking-wider uppercase">Target Assets *</label>
+            <div class="glacier-recessed-sm rounded-lg p-2 max-h-64 overflow-y-auto">
+                {% for asset in assets %}
+                <label class="flex items-center gap-3 p-3 hover:bg-white/40 transition-colors cursor-pointer border-b border-white/20 last:border-b-0">
+                    <input type="checkbox" name="asset_ids" value="{{ asset.id }}" class="w-4 h-4 text-glacier-blue bg-white/50 border-white/30 rounded focus:ring-glacier-blue focus:ring-2">
+                    <div class="flex flex-col">
+                        <span class="text-slate-700 font-mono text-sm font-medium">{{ asset.hostname or asset.ip_address }}</span>
+                        <span class="text-slate-500 text-xs">{{ asset.environment|capitalize }} - {{ asset.criticality|capitalize }}</span>
+                    </div>
+                </label>
+                {% else %}
+                <div class="text-slate-500 p-4 text-sm text-center">No assets available. <a href="/assets/new" class="text-glacier-blue hover:underline font-medium">Add one first</a>.</div>
+                {% endfor %}
+            </div>
+        </div>
+        
+        <div class="mt-8 flex gap-4">
+            <button type="submit" class="px-6 py-2.5 text-sm font-semibold tracking-wider text-slate-700 glacier-btn rounded-xl flex-1 flex justify-center uppercase">
+                Start Scan
+            </button>
+            <a href="/scans" class="px-6 py-2.5 text-sm font-semibold tracking-wider text-slate-600 bg-white/20 border border-white/30 hover:bg-white/40 transition-colors rounded-xl flex justify-center uppercase">
+                Cancel
+            </a>
+        </div>
+    </form>
+</section>
+{% endblock %}

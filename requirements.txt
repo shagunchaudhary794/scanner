@@ -1,0 +1,10 @@
+Flask==3.0.3
+Flask-SQLAlchemy==3.1.1
+psycopg2-binary==2.9.9
+python-dotenv==1.0.1
+celery==5.4.0
+redis==5.0.3
+gvm-tools==24.3.0
+cryptography==44.0.0
+requests==2.32.3
+pdfkit==1.0.0

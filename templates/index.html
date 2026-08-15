@@ -1,0 +1,199 @@
+{% extends "base.html" %}
+
+{% block content %}
+<!-- BEGIN: Stats Row -->
+<section class="grid grid-cols-4 gap-8 mb-10">
+    <!-- Total Assets Card -->
+    <div class="glacier-card p-6 flex flex-col justify-between h-40 relative overflow-hidden group">
+        <div class="absolute -right-4 -top-4 w-24 h-24 bg-glacier-blue/5 rounded-full blur-2xl group-hover:bg-glacier-blue/10 transition-colors"></div>
+        <div class="flex justify-between items-start relative z-10">
+            <span class="text-xs font-semibold text-slate-500 tracking-wider uppercase">Total Assets</span>
+            <div class="p-2 bg-white/40 rounded-lg backdrop-blur-sm">
+                <svg class="w-4 h-4 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"></path></svg>
+            </div>
+        </div>
+        <div class="relative z-10">
+            <div class="text-4xl font-light text-slate-800 tracking-tight">{{ metrics.total_assets|default(0) }}</div>
+        </div>
+    </div>
+    
+    <!-- Active Scans Card -->
+    <div class="glacier-card p-6 flex flex-col justify-between h-40 relative overflow-hidden group">
+        <div class="absolute -right-4 -top-4 w-24 h-24 bg-glacier-blue/5 rounded-full blur-2xl group-hover:bg-glacier-blue/10 transition-colors"></div>
+        <div class="flex justify-between items-start relative z-10">
+            <span class="text-xs font-semibold text-slate-500 tracking-wider uppercase">Active Scans</span>
+            <div class="p-2 bg-glacier-blue/10 rounded-lg backdrop-blur-sm border border-glacier-blue/20">
+                <svg class="w-4 h-4 text-glacier-blue" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"></path></svg>
+            </div>
+        </div>
+        <div class="relative z-10">
+            <div class="text-4xl font-light text-slate-800 tracking-tight">{{ metrics.active_scans|default(0) }}</div>
+            <div class="text-sm text-slate-500 mt-2 font-medium">
+              {{ metrics.queued_scans|default(0) }} Queued, {{ metrics.running_scans|default(0) }} Running
+            </div>
+        </div>
+    </div>
+    
+    <!-- High/Critical Findings Card -->
+    <div class="glacier-card p-6 flex flex-col justify-between h-40 relative overflow-hidden group border-glacier-red/20 bg-white/70">
+        <div class="absolute -right-4 -top-4 w-32 h-32 bg-glacier-red/5 rounded-full blur-3xl group-hover:bg-glacier-red/10 transition-colors"></div>
+        <div class="flex justify-between items-start relative z-10">
+            <span class="text-xs font-semibold text-glacier-red tracking-wider uppercase">High/Critical Findings</span>
+            <div class="p-2 bg-glacier-red/10 rounded-lg backdrop-blur-sm border border-glacier-red/20">
+                <svg class="w-4 h-4 text-glacier-red" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"></path></svg>
+            </div>
+        </div>
+        <div class="relative z-10">
+            <div class="text-4xl font-light text-slate-800 tracking-tight flex items-baseline gap-1">
+                <span class="text-glacier-red font-medium">{{ metrics.high_critical_findings|default(0) }}</span>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Agent Status Card -->
+    <div class="glacier-card p-6 flex flex-col justify-between h-40 relative overflow-hidden group">
+        <div class="absolute -right-4 -top-4 w-24 h-24 bg-glacier-green/5 rounded-full blur-2xl group-hover:bg-glacier-green/10 transition-colors"></div>
+        <div class="flex justify-between items-start relative z-10">
+            <span class="text-xs font-semibold text-slate-500 tracking-wider uppercase">Agent Status</span>
+            <div class="p-2 bg-glacier-blue/10 rounded-lg backdrop-blur-sm border border-glacier-blue/20">
+                <svg class="w-4 h-4 text-glacier-blue" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"></path></svg>
+            </div>
+        </div>
+        <div class="relative z-10">
+            <div class="text-4xl font-light text-slate-800 tracking-tight">{{ metrics.agents_online|default(0) }}<span class="text-xl font-light text-slate-400 ml-1">/{{ metrics.total_agents|default(0) }}</span></div>
+            <div class="text-sm text-slate-600 mt-2 flex items-center gap-2 font-medium">
+                {% if metrics.agents_online > 0 %}
+                <span class="w-2.5 h-2.5 rounded-full bg-glacier-green shadow-[0_0_8px_rgba(16,185,129,0.5)]"></span> Healthy
+                {% else %}
+                <span class="w-2.5 h-2.5 rounded-full bg-slate-400"></span> Offline
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</section>
+<!-- END: Stats Row -->
+
+<!-- BEGIN: Main Tables Area -->
+<div class="grid grid-cols-2 gap-8 h-[calc(100%-14rem)] min-h-[450px]">
+    
+    <!-- Active & Recent Scans Table -->
+    <section class="glacier-card flex flex-col overflow-hidden">
+        <div class="p-6 border-b border-white/40 flex justify-between items-center bg-white/20">
+            <h3 class="text-sm font-semibold text-slate-800 tracking-wider uppercase">Active &amp; Recent Scans</h3>
+            <a href="/scans" class="text-xs font-bold text-slate-500 hover:text-slate-800 tracking-widest uppercase transition-colors">
+                View All
+            </a>
+        </div>
+        <div class="flex-1 overflow-auto p-4">
+            <table class="w-full text-left text-sm border-separate border-spacing-y-3">
+                <thead class="text-xs text-slate-500 uppercase tracking-wider sticky top-0 bg-transparent z-10">
+                    <tr>
+                        <th class="pb-3 px-4 font-semibold">Scan ID</th>
+                        <th class="pb-3 px-4 font-semibold">Type</th>
+                        <th class="pb-3 px-4 font-semibold">Status</th>
+                        <th class="pb-3 px-4 font-semibold text-right">Start Time</th>
+                        <th class="pb-3 px-4 font-semibold text-right">Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for scan in recent_scans %}
+                    <tr class="glacier-recessed-sm group hover:bg-white/60 transition-colors cursor-pointer" onclick="window.location='/scans/{{ scan.id }}'">
+                        <td class="py-4 px-4 font-medium rounded-l-xl">
+                            <span class="text-glacier-blue hover:text-glacier-blue-light transition-colors">SCAN-{{ scan.id }}</span>
+                        </td>
+                        <td class="py-4 px-4">
+                            {% if scan.type == 'internal' %}
+                            <span class="px-2.5 py-1 text-[10px] font-bold text-slate-600 border border-slate-300 rounded-md bg-slate-200/50 uppercase tracking-wide">Internal</span>
+                            {% else %}
+                            <span class="px-2.5 py-1 text-[10px] font-bold text-glacier-yellow border border-glacier-yellow/30 rounded-md bg-glacier-yellow/10 uppercase tracking-wide">External</span>
+                            {% endif %}
+                        </td>
+                        <td class="py-4 px-4 flex items-center gap-2 {% if scan.status == 'running' %}text-glacier-blue font-medium{% else %}text-slate-500{% endif %}">
+                            {% if scan.status == 'running' %}
+                            <div class="flex flex-col gap-1 w-full max-w-[120px]">
+                                <div class="flex items-center gap-2">
+                                    <span class="relative flex h-2.5 w-2.5">
+                                      <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-glacier-blue opacity-75"></span>
+                                      <span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-glacier-blue"></span>
+                                    </span>
+                                    <span>Running</span>
+                                    <span class="text-[10px] font-mono ml-auto">{{ scan.progress_percent }}%</span>
+                                </div>
+                                <div class="w-full bg-slate-200 rounded-full h-1">
+                                    <div class="bg-glacier-blue h-1 rounded-full" style="width: {{ scan.progress_percent }}%"></div>
+                                </div>
+                            </div>
+                            {% elif scan.status == 'queued' %}
+                            <span class="w-2.5 h-2.5 rounded-full bg-slate-300 border border-slate-400"></span> Queued
+                            {% elif scan.status == 'completed' %}
+                            <span class="w-2.5 h-2.5 rounded-full bg-slate-400"></span> {{ scan.status|capitalize }} ({{ scan.findings|length }} findings)
+                            {% else %}
+                            <span class="w-2.5 h-2.5 rounded-full bg-slate-400"></span> {{ scan.status|capitalize }}
+                            {% endif %}
+                        </td>
+                        <td class="py-4 px-4 text-right font-mono text-xs text-slate-500">
+                            {{ scan.start_time.strftime('%m-%d %H:%M') if scan.start_time else '--:--' }}
+                        </td>
+                        <td class="py-4 px-4 text-right rounded-r-xl">
+                            {% if scan.status in ['queued', 'running'] %}
+                            <form action="{{ url_for('main.cancel_scan', id=scan.id) }}" method="POST" class="inline" onclick="event.stopPropagation();">
+                                <button type="submit" class="text-xs px-2 py-1 bg-error/10 text-error hover:bg-error/20 rounded border border-error/30 transition-colors">
+                                    Stop
+                                </button>
+                            </form>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr><td colspan="5" class="py-4 px-4 text-slate-500 text-center">No recent scans</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </section>
+    
+    <!-- Recent Findings List -->
+    <section class="glacier-card flex flex-col overflow-hidden">
+        <div class="p-6 border-b border-white/40 flex justify-between items-center bg-white/20">
+            <h3 class="text-sm font-semibold text-slate-800 tracking-wider uppercase flex items-center gap-2">
+                <svg class="w-5 h-5 text-glacier-red" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"></path></svg>
+                Recent Findings
+            </h3>
+            <a href="/findings" class="text-xs font-bold text-slate-500 hover:text-slate-800 tracking-widest uppercase transition-colors">View All</a>
+        </div>
+        <div class="flex-1 overflow-auto p-4">
+            <table class="w-full text-left text-sm border-separate border-spacing-y-3">
+                <thead class="text-xs text-slate-500 uppercase tracking-wider sticky top-0 bg-transparent z-10">
+                    <tr>
+                        <th class="pb-3 px-2 font-semibold w-6"></th>
+                        <th class="pb-3 px-4 font-semibold">CVE</th>
+                        <th class="pb-3 px-4 font-semibold">Asset</th>
+                        <th class="pb-3 px-4 font-semibold">Description</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for finding in recent_findings %}
+                    <tr class="glacier-recessed-sm bg-white/30 hover:bg-white/60 transition-colors">
+                        <td class="py-4 px-2 rounded-l-xl">
+                            {% if finding.severity == 'Critical' or finding.severity == 'High' %}
+                            <div class="w-1.5 h-10 bg-glacier-red rounded-full mx-auto shadow-[0_0_8px_rgba(239,68,68,0.5)]"></div>
+                            {% elif finding.severity == 'Medium' %}
+                            <div class="w-1.5 h-10 bg-glacier-yellow rounded-full mx-auto shadow-[0_0_8px_rgba(245,158,11,0.5)]"></div>
+                            {% else %}
+                            <div class="w-1.5 h-10 bg-slate-400 rounded-full mx-auto"></div>
+                            {% endif %}
+                        </td>
+                        <td class="py-4 px-4 font-mono text-xs {% if finding.severity == 'Critical' or finding.severity == 'High' %}text-glacier-red{% elif finding.severity == 'Medium' %}text-glacier-yellow{% else %}text-slate-500{% endif %} font-medium">{{ finding.cve }}</td>
+                        <td class="py-4 px-4 font-mono text-xs text-slate-700 bg-slate-100/50 my-2 rounded-md inline-block mt-3 border border-white">{{ finding.asset.hostname or finding.asset.ip_address }}</td>
+                        <td class="py-4 px-4 text-xs text-slate-600 truncate max-w-[180px] rounded-r-xl pr-6" title="{{ finding.description }}">{{ finding.description }}</td>
+                    </tr>
+                    {% else %}
+                    <tr><td colspan="4" class="py-4 px-4 text-slate-500 text-center">No findings</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </section>
+</div>
+<!-- END: Main Tables Area -->
+{% endblock %}

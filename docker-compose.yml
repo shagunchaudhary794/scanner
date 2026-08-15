@@ -1,0 +1,73 @@
+version: '3.8'
+
+services:
+  web:
+    build: .
+    command: flask run
+    ports:
+      - "5000:5000"
+    environment:
+      - DATABASE_URL=postgresql://scanner:scanner@db:5432/scanner
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+    volumes:
+      - ./:/app
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  worker:
+    build: .
+    command: celery -A tasks.celery worker --loglevel=info
+    environment:
+      - DATABASE_URL=postgresql://scanner:scanner@db:5432/scanner
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - PYTHONPATH=/app
+    volumes:
+      - ./:/app
+      - gvmd_socket:/run/gvmd
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  db:
+    image: postgres:15-alpine
+    environment:
+      - POSTGRES_USER=scanner
+      - POSTGRES_PASSWORD=scanner
+      - POSTGRES_DB=scanner
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U scanner"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+
+  openvas:
+    image: immauss/openvas:latest
+    ports:
+      - "9392:9392"
+    environment:
+      - PUBLIC_HOSTNAME=localhost
+      - SKIPSYNC=true
+    volumes:
+      - gvmd_socket:/run/gvmd
+
+  zap:
+    image: zaproxy/zap-stable:latest
+    command: zap.sh -daemon -host 0.0.0.0 -port 8090 -config api.disablekey=true -config api.addrs.addr.name=.* -config api.addrs.addr.regex=true
+    ports:
+      - "8090:8090"
+
+volumes:
+  postgres_data:
+  gvmd_socket:
