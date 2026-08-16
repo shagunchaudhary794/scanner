@@ -10,6 +10,10 @@ import requests
 from celery import Celery
 from config import Config
 
+import cvss_engine
+import eol_os
+from default_creds import run_default_creds_scan
+
 # Initialize Celery app
 celery = Celery(
     'tasks',
@@ -29,6 +33,25 @@ DB_PORTS = {3306, 5432, 1433, 27017, 6379, 1521}
 # PCI DSS §6.4: remote administration services visible to the Internet require
 # a Special Note (Telnet specifically transmits credentials in cleartext).
 REMOTE_ADMIN_SERVICES = {'ssh', 'telnet', 'rdp', 'vnc', 'ms-wbt-server', 'pcanywhere'}
+
+
+def _make_finding(db, Finding, scan_id, asset_id, severity, cve, description,
+                   recommendation, source_tool, is_auto_fail=False):
+    """Single choke point for creating a Finding. Every finding, regardless
+    of which tool produced it, gets its CVSS score resolved here through
+    the NVD-backed engine (cvss_engine.py) rather than trusting whatever
+    severity label the source tool assigned — see architecture doc
+    correction #4. Findings without a CVE fall back to a conservative
+    CVSS-equivalent band derived from `severity`.
+    """
+    from models import CveCache
+    score, source = cvss_engine.resolve_cvss(cve, db, CveCache, severity_hint=severity)
+    return Finding(
+        scan_id=scan_id, asset_id=asset_id, severity=severity, cve=cve or '',
+        description=description, recommendation=recommendation,
+        source_tool=source_tool, is_auto_fail=is_auto_fail,
+        cvss_score=score, cvss_source=source,
+    )
 
 
 @celery.task
@@ -62,6 +85,12 @@ def execute_scan(scan_id, scan_type, asset_ids):
                 # host/port/service/OS fingerprinting (PCI §5.1-5.3), and every
                 # downstream tool below targets the ports it finds.
                 open_ports = _run_nmap_scan(scan.id, asset_id, target, db, Finding)
+
+                # PCI §6.1: known vendor default accounts/passwords, tested
+                # (not brute-forced) against services Nmap found open.
+                # Applies to both external and internal scans since the
+                # underlying services are the same regardless of scan path.
+                _run_default_creds_check(scan.id, asset_id, target, open_ports, db, Finding)
 
                 if scan_type == 'external':
                     # PCI DSS 11.3.2 external scan pipeline.
@@ -149,7 +178,8 @@ def _run_nuclei_scan(scan_id, asset_id, target, db, Finding):
                 else:
                     severity = 'Informational'
 
-                finding = Finding(
+                finding = _make_finding(
+                    db, Finding,
                     scan_id=scan.id,
                     asset_id=asset_id,
                     severity=severity,
@@ -170,6 +200,40 @@ def _run_nuclei_scan(scan_id, asset_id, target, db, Finding):
     except Exception as e:
         print(f"Nuclei error: {e}")
         raise e
+
+
+def _run_default_creds_check(scan_id, asset_id, target, open_ports, db, Finding):
+    """PCI §6.1 (exact wording): 'Detect the presence of built-in or default
+    accounts and passwords... Any such vulnerability must be marked as an
+    automatic failure by the ASV.' See default_creds.py docstring for why
+    this is a single-attempt-per-pair check, not brute force.
+    """
+    from models import Scan
+    scan = Scan.query.get(scan_id)
+    scan.progress = f"Checking default credentials on {target}..."
+    db.session.commit()
+
+    web_ports = [p['port'] for p in open_ports if p['port'] in WEB_PORTS or p['service'] in ('http', 'https')]
+
+    try:
+        hits = run_default_creds_scan(target, open_ports, web_scheme='http', web_ports=web_ports)
+    except Exception as e:
+        print(f"Default-credential check error for {target}: {e}")
+        return
+
+    for hit in hits:
+        db.session.add(_make_finding(
+            db, Finding, scan_id=scan.id, asset_id=asset_id, severity='Critical', cve='',
+            description=(
+                f"{hit['service']} on port {hit['port']} accepted a known vendor default "
+                f"credential (username: {hit['username']}). {hit['note']}"
+            ),
+            recommendation="Change the default credential immediately and disable the account if unused.",
+            source_tool='default-creds-check',
+            is_auto_fail=True,  # PCI §6.1 / §7: default credentials are an explicit auto-fail
+        ))
+    if hits:
+        db.session.commit()
 
 
 def _run_nmap_scan(scan_id, asset_id, target, db, Finding):
@@ -228,8 +292,8 @@ def _run_nmap_scan(scan_id, asset_id, target, db, Finding):
 
                 # PCI 1.4.4 / §6.6 — databases exposed to the Internet: auto-fail
                 if port_id in DB_PORTS:
-                    db.session.add(Finding(
-                        scan_id=scan.id, asset_id=asset_id, severity='High', cve='',
+                    db.session.add(_make_finding(
+                        db, Finding, scan_id=scan.id, asset_id=asset_id, severity='High', cve='',
                         description=(
                             f"Database service ({service_name}) exposed on port {port_id}/{proto}. "
                             f"Open access to system components storing cardholder data from the "
@@ -242,8 +306,8 @@ def _run_nmap_scan(scan_id, asset_id, target, db, Finding):
                 # PCI §6.4 — remote admin services visible to the Internet: Special Note
                 if service_name in REMOTE_ADMIN_SERVICES:
                     is_telnet = service_name == 'telnet'
-                    db.session.add(Finding(
-                        scan_id=scan.id, asset_id=asset_id,
+                    db.session.add(_make_finding(
+                        db, Finding, scan_id=scan.id, asset_id=asset_id,
                         severity='High' if is_telnet else 'Medium', cve='',
                         description=f"Remote administration service ({service_name}) detected on port {port_id}/{proto}.",
                         recommendation=(
@@ -262,8 +326,8 @@ def _run_nmap_scan(scan_id, asset_id, target, db, Finding):
                     is_vuln_hit = 'VULNERABLE' in output
 
                     if is_zone_transfer or is_vuln_hit:
-                        db.session.add(Finding(
-                            scan_id=scan.id, asset_id=asset_id, severity='High', cve='',
+                        db.session.add(_make_finding(
+                            db, Finding, scan_id=scan.id, asset_id=asset_id, severity='High', cve='',
                             description=f"Nmap NSE [{script_id}] on port {port_id}/{proto}: {output[:500]}",
                             recommendation="Review and remediate per NSE script guidance.",
                             source_tool='nmap',
@@ -272,11 +336,34 @@ def _run_nmap_scan(scan_id, asset_id, target, db, Finding):
                         ))
 
             if os_name:
-                db.session.add(Finding(
-                    scan_id=scan.id, asset_id=asset_id, severity='Informational', cve='',
-                    description=f"OS fingerprint: {os_name}", recommendation='',
-                    source_tool='nmap', is_auto_fail=False
-                ))
+                # PCI §7 (exact wording): "Determining the OS is a version no
+                # longer supported by the vendor... must be marked as an
+                # automatic failure." eol_os.check_eol matches the free-text
+                # Nmap fingerprint against a curated EOL table; an unmatched
+                # string means "unknown," not "safe," so it's still logged,
+                # just not auto-failed.
+                eol_info = eol_os.check_eol(os_name)
+                if eol_info and eol_info['is_eol']:
+                    db.session.add(_make_finding(
+                        db, Finding, scan_id=scan.id, asset_id=asset_id, severity='High', cve='',
+                        description=(
+                            f"OS fingerprint: {os_name} — matched {eol_info['matched_name']}, "
+                            f"end-of-life as of {eol_info['eol_date'].isoformat()}. Unsupported "
+                            f"operating systems no longer receive vendor security patches."
+                        ),
+                        recommendation="Upgrade to a currently supported OS version.",
+                        source_tool='nmap', is_auto_fail=True
+                    ))
+                else:
+                    note = (
+                        f"(EOL {eol_info['eol_date'].isoformat()}, still within support window)"
+                        if eol_info else "(support status not determined against known EOL table)"
+                    )
+                    db.session.add(_make_finding(
+                        db, Finding, scan_id=scan.id, asset_id=asset_id, severity='Informational', cve='',
+                        description=f"OS fingerprint: {os_name} {note}", recommendation='',
+                        source_tool='nmap', is_auto_fail=False
+                    ))
 
         db.session.commit()
     except subprocess.TimeoutExpired:
@@ -337,8 +424,8 @@ def _run_testssl_scan(scan_id, asset_id, target, open_ports, db, Finding):
 
                 if severity_raw in ('CRITICAL', 'HIGH') or is_early_protocol_offered:
                     severity = 'Critical' if severity_raw == 'CRITICAL' else 'High'
-                    db.session.add(Finding(
-                        scan_id=scan.id, asset_id=asset_id, severity=severity, cve='',
+                    db.session.add(_make_finding(
+                        db, Finding, scan_id=scan.id, asset_id=asset_id, severity=severity, cve='',
                         description=f"testssl.sh [{entry_id}] on port {port}: {finding_text}",
                         recommendation="Disable SSL/early TLS; support TLS 1.2+ only with strong cipher suites.",
                         source_tool='testssl',
@@ -434,8 +521,8 @@ def _run_zap_scan(scan_id, asset_id, target, open_ports, db, Finding):
             is_auto_fail = any(k in name.lower() for k in AUTO_FAIL_KEYWORDS)
             severity = 'High' if is_auto_fail else risk
 
-            db.session.add(Finding(
-                scan_id=scan.id, asset_id=asset_id, severity=severity, cve='',
+            db.session.add(_make_finding(
+                db, Finding, scan_id=scan.id, asset_id=asset_id, severity=severity, cve='',
                 description=f"ZAP: {name} — {desc[:400]}",
                 recommendation=solution[:500],
                 source_tool='zap', is_auto_fail=is_auto_fail
@@ -616,7 +703,8 @@ def _run_openvas_scan(scan_id, asset_id, target, db, Finding):
                 # PCI 1.4.4 / §6.6 note: databases exposed to the Internet are
                 # already flagged (auto-fail) by _run_nmap_scan via port; this
                 # OpenVAS pass is CVE-based, not overlapping that rule.
-                db.session.add(Finding(
+                db.session.add(_make_finding(
+                    db, Finding,
                     scan_id=scan.id,
                     asset_id=asset_id,
                     severity=severity,
