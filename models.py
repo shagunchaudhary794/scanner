@@ -45,7 +45,36 @@ class Finding(db.Model):
     recommendation = db.Column(db.Text, nullable=True)
     source_tool = db.Column(db.String(50), nullable=True)   # nmap, testssl, zap, nuclei, openvas
     is_auto_fail = db.Column(db.Boolean, default=False)     # PCI DSS automatic-fail condition (Req 11.3.2, §7)
+    # NVD-backed CVSS v3.1 base score (see cvss_engine.py). Independent of
+    # whatever severity label the source tool used -- this is what the
+    # §7 "CVSS >= 4.0 = fail" rule and compliance_status below are computed
+    # from, per the architecture doc's correction #4.
+    cvss_score = db.Column(db.Float, nullable=True)
+    # e.g. 'NVD-CVSSv3.1', 'NVD-CVSSv3.0', 'NVD-CVSSv2.0', 'tool-severity-fallback'
+    cvss_source = db.Column(db.String(50), nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    @property
+    def compliance_status(self):
+        """'Fail' if CVSS >= 4.0 or an explicit PCI auto-fail condition,
+        else 'Pass' -- PCI reference doc §7. Feeds the ASV Scan Report
+        Summary's per-vulnerability Compliance Status column (§9.2)."""
+        if self.is_auto_fail:
+            return 'Fail'
+        if self.cvss_score is not None and self.cvss_score >= 4.0:
+            return 'Fail'
+        return 'Pass'
+
+
+class CveCache(db.Model):
+    """Postgres-backed cache of NVD lookups (DB is source of truth; Redis
+    holds nothing durable). Keyed by CVE ID so repeat scans -- across
+    assets, across quarters -- don't re-hit the NVD API for the same CVE.
+    """
+    cve_id = db.Column(db.String(30), primary_key=True)
+    cvss_score = db.Column(db.Float, nullable=False)
+    cvss_source = db.Column(db.String(50), nullable=False)
+    fetched_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 class Agent(db.Model):
     id = db.Column(db.Integer, primary_key=True)
