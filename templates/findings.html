@@ -13,6 +13,8 @@
                 <tr>
                     <th class="pb-3 px-2 font-semibold w-6"></th>
                     <th class="pb-3 px-4 font-semibold">CVE</th>
+                    <th class="pb-3 px-4 font-semibold">CVSS</th>
+                    <th class="pb-3 px-4 font-semibold">Compliance</th>
                     <th class="pb-3 px-4 font-semibold">Tool</th>
                     <th class="pb-3 px-4 font-semibold">Asset</th>
                     <th class="pb-3 px-4 font-semibold">Description</th>
@@ -37,6 +39,16 @@
                         <span class="ml-1 px-1.5 py-0.5 rounded bg-glacier-red text-white text-[10px] font-bold uppercase" title="PCI DSS automatic-fail condition">Auto-Fail</span>
                         {% endif %}
                     </td>
+                    <td class="py-4 px-4 font-mono text-xs text-slate-600" title="{{ finding.cvss_source or 'no CVSS source' }}">
+                        {{ '%.1f'|format(finding.cvss_score) if finding.cvss_score is not none else '—' }}
+                    </td>
+                    <td class="py-4 px-4">
+                        {% if finding.compliance_status == 'Fail' %}
+                        <span class="px-2 py-0.5 rounded bg-glacier-red/10 text-glacier-red text-[10px] font-bold uppercase">Fail</span>
+                        {% else %}
+                        <span class="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-600 text-[10px] font-bold uppercase">Pass</span>
+                        {% endif %}
+                    </td>
                     <td class="py-4 px-4 text-xs text-slate-500 uppercase">{{ finding.source_tool }}</td>
                     <td class="py-4 px-4 font-mono text-xs text-slate-700 bg-slate-100/50 my-2 rounded-md inline-block mt-3 border border-white">{{ finding.asset.hostname or finding.asset.ip_address }}</td>
                     <td class="py-4 px-4 text-xs text-slate-600 truncate max-w-[300px]" title="{{ finding.description }}">{{ finding.description }}</td>
@@ -45,7 +57,7 @@
                     </td>
                 </tr>
                 {% else %}
-                <tr><td colspan="6" class="py-4 px-4 text-slate-500 text-center">No findings</td></tr>
+                <tr><td colspan="8" class="py-4 px-4 text-slate-500 text-center">No findings</td></tr>
                 {% endfor %}
             </tbody>
         </table>
