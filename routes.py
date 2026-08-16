@@ -136,9 +136,16 @@ def generate_report():
     if report_format == 'csv':
         si = io.StringIO()
         cw = csv.writer(si)
-        cw.writerow(['ID', 'Asset ID', 'Severity', 'CVE', 'Source Tool', 'Auto-Fail', 'Description', 'Recommendation', 'Created At'])
+        cw.writerow(['ID', 'Asset ID', 'Severity', 'CVE', 'CVSS Score', 'CVSS Source',
+                     'Compliance Status', 'Source Tool', 'Auto-Fail', 'Description',
+                     'Recommendation', 'Created At'])
         for f in findings:
-            cw.writerow([f.id, f.asset_id, f.severity, f.cve, f.source_tool, 'Yes' if f.is_auto_fail else 'No', f.description, f.recommendation, f.created_at])
+            cw.writerow([
+                f.id, f.asset_id, f.severity, f.cve,
+                f.cvss_score if f.cvss_score is not None else '',
+                f.cvss_source or '', f.compliance_status, f.source_tool,
+                'Yes' if f.is_auto_fail else 'No', f.description, f.recommendation, f.created_at
+            ])
             
         output = make_response(si.getvalue())
         output.headers["Content-Disposition"] = f"attachment; filename=report_{report.id}.csv"
@@ -175,5 +182,3 @@ def agent_heartbeat():
         
     db.session.commit()
     return {'status': 'success'}
-
-
