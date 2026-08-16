@@ -8,3 +8,10 @@ gvm-tools==24.3.0
 cryptography==44.0.0
 requests==2.32.3
 pdfkit==1.0.0
+
+# Default-credential detection (default_creds.py). Each client library is
+# import-guarded individually -- omitting one just disables that one
+# service's check rather than breaking the app.
+paramiko==3.4.0      # SSH default-creds check
+pymysql==1.1.1        # MySQL default-creds check
+pymongo==4.7.2         # MongoDB no-auth check
