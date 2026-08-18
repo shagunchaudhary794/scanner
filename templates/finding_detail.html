@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+{% block title %}Finding #{{ finding.id }} - Vigilance SOC{% endblock %}
+{% block header_title %}Finding #{{ finding.id }}{% endblock %}
+
+{% block content %}
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+    <section class="glacier-card p-6 lg:col-span-2">
+        <div class="flex items-center justify-between mb-4">
+            <h3 class="text-sm font-semibold text-slate-800 tracking-wider uppercase">Finding Details</h3>
+            {% if finding.effective_status == 'Fail' %}
+            <span class="px-3 py-1 rounded-full bg-glacier-red/10 text-glacier-red text-xs font-bold uppercase">Fail</span>
+            {% elif finding.approved_dispute %}
+            <span class="px-3 py-1 rounded-full bg-glacier-blue/10 text-glacier-blue text-xs font-bold uppercase">Pass (Exception)</span>
+            {% else %}
+            <span class="px-3 py-1 rounded-full bg-emerald-500/10 text-emerald-600 text-xs font-bold uppercase">Pass</span>
+            {% endif %}
+        </div>
+
+        <dl class="grid grid-cols-2 gap-4 text-sm mb-6">
+            <div><dt class="text-slate-500 text-xs uppercase">Asset</dt><dd class="font-mono">{{ finding.asset.hostname or finding.asset.ip_address }}</dd></div>
+            <div><dt class="text-slate-500 text-xs uppercase">Scan</dt><dd class="font-mono">#{{ finding.scan_id }}</dd></div>
+            <div><dt class="text-slate-500 text-xs uppercase">Severity</dt><dd>{{ finding.severity }}</dd></div>
+            <div><dt class="text-slate-500 text-xs uppercase">Source Tool</dt><dd class="uppercase">{{ finding.source_tool }}</dd></div>
+            <div><dt class="text-slate-500 text-xs uppercase">CVE</dt><dd class="font-mono">{{ finding.cve or '—' }}</dd></div>
+            <div>
+                <dt class="text-slate-500 text-xs uppercase">CVSS Score</dt>
+                <dd class="font-mono">{{ '%.1f'|format(finding.cvss_score) if finding.cvss_score is not none else '—' }}
+                    <span class="text-slate-400 text-xs">({{ finding.cvss_source or 'n/a' }})</span>
+                </dd>
+            </div>
+            <div><dt class="text-slate-500 text-xs uppercase">PCI Auto-Fail</dt><dd>{{ 'Yes' if finding.is_auto_fail else 'No' }}</dd></div>
+            <div><dt class="text-slate-500 text-xs uppercase">Detected</dt><dd class="font-mono">{{ finding.created_at.strftime('%Y-%m-%d %H:%M') if finding.created_at else '—' }}</dd></div>
+        </dl>
+
+        <div class="mb-4">
+            <h4 class="text-xs uppercase text-slate-500 mb-1">Description</h4>
+            <p class="text-sm text-slate-700 glacier-recessed-sm p-3">{{ finding.description }}</p>
+        </div>
+        <div>
+            <h4 class="text-xs uppercase text-slate-500 mb-1">Recommendation</h4>
+            <p class="text-sm text-slate-700 glacier-recessed-sm p-3">{{ finding.recommendation or 'No specific remediation guidance recorded.' }}</p>
+        </div>
+    </section>
+
+    <section class="glacier-card p-6">
+        <h3 class="text-sm font-semibold text-slate-800 tracking-wider uppercase mb-4">
+            Dispute This Finding
+        </h3>
+        <p class="text-xs text-slate-500 mb-4">
+            PCI DSS ASV Program Guide §8: disputes require written, system-generated
+            evidence (screen captures, config files, patch lists). An ASV analyst
+            manually reviews every submission — the finding is never removed from
+            the report, only its compliance outcome changes on approval.
+        </p>
+        <form method="POST" action="{{ url_for('main.submit_dispute', id=finding.id) }}" enctype="multipart/form-data" class="space-y-4">
+            <div>
+                <label class="block text-xs uppercase text-slate-500 mb-1">Dispute Type</label>
+                <select name="dispute_type" required class="w-full glacier-recessed-sm p-2 text-sm bg-transparent">
+                    <option value="false_positive">False Positive</option>
+                    <option value="compensating_control">Compensating Control</option>
+                </select>
+            </div>
+            <div>
+                <label class="block text-xs uppercase text-slate-500 mb-1">Submitted By</label>
+                <input type="text" name="submitted_by" placeholder="Name / email" class="w-full glacier-recessed-sm p-2 text-sm bg-transparent">
+            </div>
+            <div>
+                <label class="block text-xs uppercase text-slate-500 mb-1">Written Evidence *</label>
+                <textarea name="evidence_text" required rows="4" placeholder="Describe why this is a false positive, or describe the compensating control and how it reduces/eliminates the risk."
+                    class="w-full glacier-recessed-sm p-2 text-sm bg-transparent"></textarea>
+            </div>
+            <div>
+                <label class="block text-xs uppercase text-slate-500 mb-1">Evidence File (optional)</label>
+                <input type="file" name="evidence_file" class="w-full text-xs">
+            </div>
+            <button type="submit" class="w-full py-2.5 glacier-btn rounded-xl text-sm font-medium text-slate-700">
+                Submit Dispute
+            </button>
+        </form>
+    </section>
+
+    <section class="glacier-card p-6 lg:col-span-3">
+        <h3 class="text-sm font-semibold text-slate-800 tracking-wider uppercase mb-4">Dispute History</h3>
+        {% if finding.disputes %}
+        <div class="space-y-3">
+            {% for d in finding.disputes %}
+            <div class="glacier-recessed-sm p-4 flex items-start justify-between gap-4">
+                <div>
+                    <div class="flex items-center gap-2 mb-1">
+                        <span class="text-xs font-bold uppercase text-slate-700">
+                            {{ 'False Positive' if d.dispute_type == 'false_positive' else 'Compensating Control' }}
+                        </span>
+                        {% if d.decision == 'approved' %}
+                        <span class="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-600 text-[10px] font-bold uppercase">Approved</span>
+                        {% elif d.decision == 'rejected' %}
+                        <span class="px-2 py-0.5 rounded bg-glacier-red/10 text-glacier-red text-[10px] font-bold uppercase">Rejected</span>
+                        {% else %}
+                        <span class="px-2 py-0.5 rounded bg-glacier-yellow/10 text-glacier-yellow text-[10px] font-bold uppercase">Pending Review</span>
+                        {% endif %}
+                    </div>
+                    <p class="text-sm text-slate-700 mb-1">{{ d.evidence_text }}</p>
+                    {% if d.evidence_file_path %}
+                    <a href="{{ url_for('main.download_evidence', filename=d.evidence_file_path) }}" class="text-xs text-glacier-blue underline">Download evidence file</a>
+                    {% endif %}
+                    {% if d.decision_notes %}
+                    <p class="text-xs text-slate-500 mt-2"><span class="uppercase font-semibold">Analyst notes:</span> {{ d.decision_notes }}</p>
+                    {% endif %}
+                </div>
+                <div class="text-right text-xs text-slate-400 whitespace-nowrap">
+                    <div>Submitted {{ d.created_at.strftime('%Y-%m-%d') if d.created_at else '' }}</div>
+                    {% if d.submitted_by %}<div>by {{ d.submitted_by }}</div>{% endif %}
+                    {% if d.resolved_at %}<div class="mt-1">Resolved {{ d.resolved_at.strftime('%Y-%m-%d') }}{% if d.reviewed_by %} by {{ d.reviewed_by }}{% endif %}</div>{% endif %}
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <p class="text-sm text-slate-500">No disputes have been filed against this finding.</p>
+        {% endif %}
+    </section>
+
+</div>
+{% endblock %}
