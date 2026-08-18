@@ -54,16 +54,79 @@ class Finding(db.Model):
     cvss_source = db.Column(db.String(50), nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
+    # Relationships
+    disputes = db.relationship('Dispute', backref='finding', lazy=True,
+                                order_by='Dispute.created_at.desc()')
+
     @property
     def compliance_status(self):
         """'Fail' if CVSS >= 4.0 or an explicit PCI auto-fail condition,
-        else 'Pass' -- PCI reference doc §7. Feeds the ASV Scan Report
-        Summary's per-vulnerability Compliance Status column (§9.2)."""
+        else 'Pass' -- PCI reference doc §7. This is the RAW technical
+        result, unaffected by disputes -- see effective_status for the
+        dispute-adjusted outcome that actually belongs on a report."""
         if self.is_auto_fail:
             return 'Fail'
         if self.cvss_score is not None and self.cvss_score >= 4.0:
             return 'Fail'
         return 'Pass'
+
+    @property
+    def approved_dispute(self):
+        """Most recent approved dispute against this finding, if any.
+        A finding can accumulate multiple dispute attempts; only an
+        approved one changes the reported outcome."""
+        return next((d for d in self.disputes if d.decision == 'approved'), None)
+
+    @property
+    def effective_status(self):
+        """PCI reference doc §7 (compensating controls) and §8 (dispute
+        outcomes): a customer can pass a scan despite a Fail if the ASV
+        approves a false-positive claim or a compensating control. The
+        ASV can never delete the finding from the report (§8) -- only the
+        reported compliance outcome changes. This is what belongs in the
+        ASV Scan Report Summary's Compliance Status column (§9.2);
+        compliance_status above is the pre-dispute technical result.
+        """
+        if self.approved_dispute:
+            return 'Pass'
+        return self.compliance_status
+
+    @property
+    def exception_note(self):
+        """Text for the report's 'Exceptions, False Positives, or
+        Compensating Controls' column (§9.2/§8) -- empty if there's no
+        approved dispute."""
+        d = self.approved_dispute
+        if not d:
+            return ''
+        label = 'False Positive' if d.dispute_type == 'false_positive' else 'Compensating Control'
+        return f"{label}: {d.decision_notes or 'Approved by ASV analyst.'}"
+
+
+class Dispute(db.Model):
+    """PCI reference doc §8 (Dispute Resolution Process) and §7
+    (compensating controls). A dispute is the scan customer contesting a
+    finding -- either claiming it's a false positive, or presenting a
+    compensating control that reduces/eliminates the risk.
+
+    Per §8: 'The ASV cannot simply delete disputes from the report; they
+    must be explicitly documented... under Exceptions.' Note there is no
+    RBAC/auth layer in this MVP yet (that's part of the control-plane
+    work, not this repo) -- `reviewed_by` is a free-text field for now.
+    Only an authorized ASV analyst should ever be the one calling the
+    decision route once real auth exists.
+    """
+    id = db.Column(db.Integer, primary_key=True)
+    finding_id = db.Column(db.Integer, db.ForeignKey('finding.id'), nullable=False)
+    dispute_type = db.Column(db.String(50), nullable=False)  # 'false_positive' | 'compensating_control'
+    submitted_by = db.Column(db.String(255), nullable=True)
+    evidence_text = db.Column(db.Text, nullable=True)
+    evidence_file_path = db.Column(db.String(255), nullable=True)
+    reviewed_by = db.Column(db.String(255), nullable=True)
+    decision = db.Column(db.String(50), default='pending')  # pending | approved | rejected
+    decision_notes = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    resolved_at = db.Column(db.DateTime, nullable=True)
 
 
 class CveCache(db.Model):
@@ -91,3 +154,17 @@ class Report(db.Model):
     status = db.Column(db.String(50), default='generating') # generating, completed, failed
     file_path = db.Column(db.String(255), nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    # PCI reference doc §10: "Report expiration period: 90 days from the
+    # date the scan was completed" -- this is the Attestation's validity
+    # window (§9.1's "Expiration date" field), distinct from retention.
+    expires_at = db.Column(db.DateTime, nullable=True)
+    # PCI reference doc §10: "3-year record retention rule... ASVs must
+    # retain scan reports, related work papers, and work products for
+    # three (3) years." A background job can later sweep
+    # `retention_until < NOW()` per the architecture doc's Retention
+    # Cleanup Job (§45/§49) -- not implemented here, just the field.
+    retention_until = db.Column(db.DateTime, nullable=True)
+
+    @property
+    def is_expired(self):
+        return self.expires_at is not None and datetime.utcnow() > self.expires_at
