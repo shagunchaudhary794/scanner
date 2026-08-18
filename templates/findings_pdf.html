@@ -22,6 +22,7 @@
                 <th>CVSS Score</th>
                 <th>CVSS Source</th>
                 <th>Compliance Status</th>
+                <th>Exceptions / False Positives / Compensating Controls</th>
                 <th>Source Tool</th>
                 <th>PCI Auto-Fail</th>
                 <th>Description</th>
@@ -30,13 +31,14 @@
         </thead>
         <tbody>
             {% for finding in findings %}
-            <tr class="{{ 'auto-fail' if finding.is_auto_fail else '' }}">
+            <tr class="{{ 'auto-fail' if finding.is_auto_fail and not finding.approved_dispute else '' }}">
                 <td>{{ finding.asset_id }}</td>
                 <td>{{ finding.severity }}</td>
                 <td>{{ finding.cve }}</td>
                 <td>{{ '%.1f'|format(finding.cvss_score) if finding.cvss_score is not none else 'N/A' }}</td>
                 <td>{{ finding.cvss_source or 'N/A' }}</td>
-                <td>{{ finding.compliance_status }}</td>
+                <td>{{ finding.effective_status }}</td>
+                <td>{{ finding.exception_note }}</td>
                 <td>{{ finding.source_tool }}</td>
                 <td>{{ 'YES' if finding.is_auto_fail else 'No' }}</td>
                 <td>{{ finding.description }}</td>
