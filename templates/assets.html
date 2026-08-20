@@ -22,18 +22,28 @@
                     <th class="pb-3 px-4 font-semibold">IP Address</th>
                     <th class="pb-3 px-4 font-semibold">Environment</th>
                     <th class="pb-3 px-4 font-semibold">Criticality</th>
+                    <th class="pb-3 px-4 font-semibold">Scope</th>
+                    <th class="pb-3 px-4 font-semibold">Source</th>
                 </tr>
             </thead>
             <tbody>
                 {% for asset in assets %}
-                <tr class="glacier-recessed-sm group hover:bg-white/60 transition-colors">
+                <tr class="glacier-recessed-sm group hover:bg-white/60 transition-colors cursor-pointer" onclick="window.location='{{ url_for('main.asset_detail', id=asset.id) }}'">
                     <td class="py-4 px-4 font-medium text-slate-600 rounded-l-xl">{{ asset.hostname }}</td>
                     <td class="py-4 px-4 font-mono text-xs text-slate-600">{{ asset.ip_address }}</td>
                     <td class="py-4 px-4 text-xs text-slate-600 capitalize">{{ asset.environment }}</td>
-                    <td class="py-4 px-4 text-xs text-slate-600 capitalize rounded-r-xl">{{ asset.criticality }}</td>
+                    <td class="py-4 px-4 text-xs text-slate-600 capitalize">{{ asset.criticality }}</td>
+                    <td class="py-4 px-4 text-xs">
+                        {% if asset.is_out_of_scope %}
+                        <span class="px-2 py-0.5 rounded bg-slate-400/10 text-slate-500 text-[10px] font-bold uppercase">Out of Scope</span>
+                        {% else %}
+                        <span class="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-600 text-[10px] font-bold uppercase">In Scope</span>
+                        {% endif %}
+                    </td>
+                    <td class="py-4 px-4 text-xs text-slate-500 capitalize rounded-r-xl">{{ asset.discovered_via.replace('_', ' ') }}</td>
                 </tr>
                 {% else %}
-                <tr><td colspan="4" class="py-4 px-4 text-slate-500 text-center">No assets found</td></tr>
+                <tr><td colspan="6" class="py-4 px-4 text-slate-500 text-center">No assets found</td></tr>
                 {% endfor %}
             </tbody>
         </table>
