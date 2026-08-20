@@ -5,12 +5,43 @@ import os
 import uuid
 import pdfkit
 from werkzeug.utils import secure_filename
-from models import Asset, Scan, ScanTarget, Finding, Agent, Report, Dispute
+from models import Asset, Scan, ScanTarget, Finding, Agent, Report, Dispute, OrgProfile
 from app import db
+import discovery
+import re
 
 from datetime import datetime, timedelta
 
 bp = Blueprint('main', __name__)
+
+# §9.3 requires "a list of all detected open ports and the specific
+# service/protocol identified by the ASV for each component." There's no
+# separate structured ports table in this MVP -- the Nmap task already
+# embeds "port N/tcp" phrasing consistently in the finding descriptions
+# it writes (see tasks.py's DB-exposure, remote-admin, and NSE-script
+# finding text), so this parses that instead of adding a new table.
+_PORT_RE = re.compile(r'port (\d+)/(tcp|udp)', re.IGNORECASE)
+
+# Alphabetical order isn't severity order ("Medium" > "Low" > "High" would
+# sort wrong) -- used to sort the Vulnerability Details section (§9.3)
+# from most to least severe.
+_SEVERITY_RANK = {'Critical': 0, 'High': 1, 'Medium': 2, 'Low': 3, 'Informational': 4}
+
+
+def _extract_port(finding):
+    if not finding.description:
+        return None
+    m = _PORT_RE.search(finding.description)
+    return f"{m.group(1)}/{m.group(2)}" if m else None
+
+
+def _component_ports(asset_id, scan_id):
+    ports = set()
+    for f in Finding.query.filter_by(asset_id=asset_id, scan_id=scan_id).all():
+        p = _extract_port(f)
+        if p:
+            ports.add(p)
+    return sorted(ports)
 
 @bp.route('/assets')
 def assets():
@@ -30,6 +61,102 @@ def new_asset():
         db.session.commit()
         return redirect(url_for('main.assets'))
     return render_template('asset_form.html')
+
+
+@bp.route('/assets/<int:id>')
+def asset_detail(id):
+    asset = Asset.query.get_or_404(id)
+    asset_findings = Finding.query.filter_by(asset_id=id).order_by(Finding.created_at.desc()).all()
+    return render_template('asset_detail.html', asset=asset, findings=asset_findings)
+
+
+@bp.route('/assets/<int:id>/discover', methods=['POST'])
+def discover_assets(id):
+    """PCI reference doc §4.4: DNS forward/reverse lookups of common host
+    names, MX record lookups, and HTTP-redirect tracking, run against a
+    customer-provided asset's hostname to surface Internet-facing
+    components the customer didn't list. Results are NOT persisted as
+    Assets here -- Phase 1 Scoping requires the ASV to consult the
+    customer before adding discovered components to scope, so this just
+    shows candidates for the customer/analyst to confirm.
+    """
+    asset = Asset.query.get_or_404(id)
+    if not asset.hostname:
+        flash('Discovery requires a hostname (DNS-based checks need a domain, not just an IP).', 'error')
+        return redirect(url_for('main.asset_detail', id=id))
+
+    try:
+        candidates = discovery.run_discovery(asset.hostname)
+    except Exception as e:
+        flash(f'Discovery failed: {e}', 'error')
+        return redirect(url_for('main.asset_detail', id=id))
+
+    # Don't re-suggest hosts that are already tracked as Assets.
+    existing_hostnames = {a.hostname for a in Asset.query.all() if a.hostname}
+    candidates = {h: v for h, v in candidates.items() if h not in existing_hostnames}
+
+    return render_template('discovery_results.html', asset=asset, candidates=candidates)
+
+
+@bp.route('/assets/<int:id>/discover/confirm', methods=['POST'])
+def confirm_discovery(id):
+    """Phase 1 Scoping: 'If the ASV finds hidden components not listed by
+    the customer, they must consult the customer and record un-scanned
+    items on the Attestation of Scan Compliance.' Only candidates the
+    customer/analyst explicitly checked get added as real Assets.
+    """
+    source_asset = Asset.query.get_or_404(id)
+    selected = request.form.getlist('confirm')  # each value: "hostname|ip|via"
+
+    added = 0
+    for entry in selected:
+        try:
+            hostname, ip, via = entry.split('|', 2)
+        except ValueError:
+            continue
+        if Asset.query.filter_by(hostname=hostname).first():
+            continue
+        new = Asset(
+            hostname=hostname,
+            ip_address=ip or '0.0.0.0',
+            environment=source_asset.environment,
+            criticality=source_asset.criticality,
+            discovered_via=via,
+        )
+        db.session.add(new)
+        added += 1
+
+    db.session.commit()
+    flash(f'{added} discovered asset(s) added to scope.', 'success')
+    return redirect(url_for('main.assets'))
+
+
+@bp.route('/assets/<int:id>/scope', methods=['POST'])
+def update_scope(id):
+    """§4.2: an asset can only be marked out-of-scope with a formal
+    segmentation attestation on record -- an empty attestation is refused
+    outright rather than silently accepted, since §4.2's exact condition
+    is that the customer 'must formally attest... adequate network
+    segmentation.'
+    """
+    asset = Asset.query.get_or_404(id)
+    action = request.form.get('action')
+
+    if action == 'exclude':
+        attestation = request.form.get('segmentation_attestation', '').strip()
+        if not attestation:
+            flash('A segmentation attestation is required to mark a component out of scope (PCI §4.2).', 'error')
+            return redirect(url_for('main.asset_detail', id=id))
+        asset.is_out_of_scope = True
+        asset.segmentation_attestation = attestation
+    elif action == 'include':
+        asset.is_out_of_scope = False
+        # Attestation text stays on record even after re-inclusion --
+        # it's part of the scoping history, not something to silently drop.
+
+    db.session.commit()
+    flash('Scope updated.', 'success')
+    return redirect(url_for('main.asset_detail', id=id))
 
 @bp.route('/agents')
 def agents():
@@ -212,6 +339,39 @@ def decide_dispute(id):
     return redirect(url_for('main.disputes'))
 
 
+@bp.route('/settings/org', methods=['GET', 'POST'])
+def org_settings():
+    """§9.1: the Attestation of Scan Compliance cover sheet requires both
+    Scan Customer Information and ASV Information (Company, Contact,
+    Title, Phone, Email, Address, URL). Single-tenant MVP -- one row per
+    role, edited here rather than through a full organizations table.
+    """
+    asv = OrgProfile.query.filter_by(role='asv').first()
+    customer = OrgProfile.query.filter_by(role='customer').first()
+    if not asv:
+        asv = OrgProfile(role='asv')
+        db.session.add(asv)
+    if not customer:
+        customer = OrgProfile(role='customer')
+        db.session.add(customer)
+    db.session.commit()
+
+    if request.method == 'POST':
+        for profile, prefix in ((asv, 'asv'), (customer, 'customer')):
+            profile.company_name = request.form.get(f'{prefix}_company_name', '').strip()
+            profile.contact_name = request.form.get(f'{prefix}_contact_name', '').strip()
+            profile.title = request.form.get(f'{prefix}_title', '').strip()
+            profile.phone = request.form.get(f'{prefix}_phone', '').strip()
+            profile.email = request.form.get(f'{prefix}_email', '').strip()
+            profile.address = request.form.get(f'{prefix}_address', '').strip()
+            profile.url = request.form.get(f'{prefix}_url', '').strip()
+        db.session.commit()
+        flash('Organization profiles updated.', 'success')
+        return redirect(url_for('main.org_settings'))
+
+    return render_template('org_settings.html', asv=asv, customer=customer)
+
+
 @bp.route('/evidence/<path:filename>')
 def download_evidence(filename):
     """Serves an uploaded evidence file. filename is the stored (already
@@ -222,7 +382,8 @@ def download_evidence(filename):
 @bp.route('/reports')
 def reports():
     all_reports = Report.query.order_by(Report.created_at.desc()).all()
-    return render_template('reports.html', reports=all_reports)
+    completed_scans = Scan.query.filter_by(status='completed').order_by(Scan.created_at.desc()).all()
+    return render_template('reports.html', reports=all_reports, completed_scans=completed_scans)
 
 @bp.route('/reports/generate', methods=['POST'])
 def generate_report():
@@ -280,6 +441,97 @@ def generate_report():
             return redirect(url_for('main.reports'))
             
     return redirect(url_for('main.reports'))
+
+
+@bp.route('/reports/generate/full', methods=['POST'])
+def generate_full_report():
+    """Generates the complete three-part PCI report as one combined PDF,
+    tied to a specific scan:
+      - §9.1 Attestation of Scan Compliance (cover sheet + signatures)
+      - §9.2 ASV Scan Report Summary (per-component pass/fail + correction plan)
+      - §9.3 ASV Scan Vulnerability Details (full technical detail, CVSS, CVE, ports)
+
+    This is how real ASV reports are typically delivered -- one document,
+    three sections -- rather than three separate files.
+    """
+    scan_id = request.form.get('scan_id')
+    if not scan_id:
+        flash('A scan must be selected to generate a full PCI report.', 'error')
+        return redirect(url_for('main.reports'))
+
+    scan = Scan.query.get_or_404(scan_id)
+    asv = OrgProfile.query.filter_by(role='asv').first()
+    customer = OrgProfile.query.filter_by(role='customer').first()
+
+    scan_targets = ScanTarget.query.filter_by(scan_id=scan.id).all()
+    all_assets = [st.asset for st in scan_targets]
+    in_scope_assets = [a for a in all_assets if not a.is_out_of_scope]
+    excluded_assets = [a for a in all_assets if a.is_out_of_scope]
+
+    findings = Finding.query.filter_by(scan_id=scan.id).all()
+    findings.sort(key=lambda f: _SEVERITY_RANK.get(f.severity, 5))
+
+    in_scope_asset_ids = {a.id for a in in_scope_assets}
+    in_scope_findings = [f for f in findings if f.asset_id in in_scope_asset_ids]
+    failing_findings = [f for f in in_scope_findings if f.effective_status == 'Fail']
+    # §9.1: "A Pass only indicates whether the scanned systems are
+    # compliant with... PCI DSS 11.3.2. It does not represent overall
+    # compliance status with any other PCI DSS requirement."
+    overall_result = 'Fail' if failing_findings else 'Pass'
+
+    components = []
+    for asset in in_scope_assets:
+        asset_findings = [f for f in in_scope_findings if f.asset_id == asset.id]
+        asset_status = 'Fail' if any(f.effective_status == 'Fail' for f in asset_findings) else 'Pass'
+        correction_plan = sorted({
+            f.recommendation for f in asset_findings
+            if f.effective_status == 'Fail' and f.recommendation
+        })
+        components.append({
+            'asset': asset,
+            'status': asset_status,
+            'findings': asset_findings,
+            'ports': _component_ports(asset.id, scan.id),
+            'correction_plan': correction_plan,
+        })
+
+    now = datetime.utcnow()
+    report = Report(
+        type=f'Full PCI Report - Scan {scan.id}', format='pdf', status='completed',
+        report_type='full_pci', scan_id=scan.id, overall_result=overall_result,
+        created_at=now,
+        expires_at=now + timedelta(days=90),          # §10: 90-day attestation validity
+        retention_until=now + timedelta(days=365 * 3), # §10: 3-year ASV record retention
+    )
+    db.session.add(report)
+    db.session.commit()
+
+    # No structured "Partial" tracking exists elsewhere in the schema --
+    # a scan that ended with an error is the only signal available for
+    # distinguishing Full vs Partial (§9.1's "Full/Partial scan type" field).
+    scan_type_label = 'Partial' if scan.error_message else 'Full'
+
+    html = render_template(
+        'full_report_pdf.html',
+        report=report, scan=scan, asv=asv, customer=customer,
+        overall_result=overall_result, scan_type_label=scan_type_label,
+        components=components, in_scope_findings=in_scope_findings,
+        failing_count=len(failing_findings),
+        components_scanned_count=len(in_scope_assets),
+        excluded_count=len(excluded_assets), excluded_assets=excluded_assets,
+    )
+
+    try:
+        pdf = pdfkit.from_string(html, False)
+        output = make_response(pdf)
+        output.headers["Content-Disposition"] = f"attachment; filename=pci_report_scan_{scan.id}.pdf"
+        output.headers["Content-type"] = "application/pdf"
+        return output
+    except Exception as e:
+        report.status = 'failed'
+        db.session.commit()
+        flash(f"PDF generation failed: {e}", 'error')
+        return redirect(url_for('main.reports'))
 
 @bp.route('/api/agents/heartbeat', methods=['POST'])
 def agent_heartbeat():
