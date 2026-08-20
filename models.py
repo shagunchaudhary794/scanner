@@ -9,6 +9,23 @@ class Asset(db.Model):
     criticality = db.Column(db.String(50), nullable=True) # e.g., High, Medium, Low
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
+    # How this asset entered scope. 'customer_provided' (default, manual
+    # entry) vs. discovery-sourced values from discovery.py's `via` tags
+    # ('dns_subdomain', 'mx_record', 'redirect'). PCI reference doc §4.4:
+    # discovered components must be tracked distinctly from what the
+    # customer originally supplied.
+    discovered_via = db.Column(db.String(50), nullable=False, default='customer_provided')
+
+    # §4.2: "System components can be excluded from the scan scope only
+    # if... adequate physical or logical network segmentation must
+    # completely isolate the excluded components from the CDE. The scan
+    # customer must formally attest... that the specific component is out
+    # of scope." segmentation_attestation is required text, not a
+    # checkbox, so the attestation itself is on record -- an empty
+    # attestation is treated as an invalid exclusion at the route layer.
+    is_out_of_scope = db.Column(db.Boolean, default=False)
+    segmentation_attestation = db.Column(db.Text, nullable=True)
+
     # Relationships
     scan_targets = db.relationship('ScanTarget', backref='asset', lazy=True)
     findings = db.relationship('Finding', backref='asset', lazy=True)
@@ -165,6 +182,41 @@ class Report(db.Model):
     # Cleanup Job (§45/§49) -- not implemented here, just the field.
     retention_until = db.Column(db.DateTime, nullable=True)
 
+    # §9: the full PCI report is three parts -- Attestation of Scan
+    # Compliance (§9.1), ASV Scan Report Summary (§9.2), ASV Scan
+    # Vulnerability Details (§9.3). report_type='full_pci' generates all
+    # three as one combined document (how real ASV reports are typically
+    # delivered); 'csv'-format exports remain the flat technical-findings
+    # export from Phase 1/2a. scan_id ties a report to the specific scan
+    # it's attesting to, needed for the Attestation's Pass/Fail + scan
+    # date fields.
+    scan_id = db.Column(db.Integer, db.ForeignKey('scan.id'), nullable=True)
+    report_type = db.Column(db.String(50), nullable=True)  # 'full_pci' | 'technical_findings'
+    # Computed at generation time: 'Pass' only if every in-scope finding's
+    # effective_status is Pass (§9.1: "A Pass only indicates whether the
+    # scanned systems are compliant with... PCI DSS 11.3.2").
+    overall_result = db.Column(db.String(20), nullable=True)
+
     @property
     def is_expired(self):
         return self.expires_at is not None and datetime.utcnow() > self.expires_at
+
+
+class OrgProfile(db.Model):
+    """§9.1: the Attestation of Scan Compliance requires both Scan
+    Customer Information and ASV Information (Company, Contact, Title,
+    Phone, Email, Address, URL) on the cover sheet. This repo is
+    single-tenant (multi-tenancy lives in the separate control-plane
+    project), so this is a simple two-row table -- one row with
+    role='asv', one with role='customer' -- rather than a full
+    organizations table.
+    """
+    id = db.Column(db.Integer, primary_key=True)
+    role = db.Column(db.String(20), nullable=False, unique=True)  # 'asv' | 'customer'
+    company_name = db.Column(db.String(255), nullable=True)
+    contact_name = db.Column(db.String(255), nullable=True)
+    title = db.Column(db.String(255), nullable=True)
+    phone = db.Column(db.String(50), nullable=True)
+    email = db.Column(db.String(255), nullable=True)
+    address = db.Column(db.Text, nullable=True)
+    url = db.Column(db.String(255), nullable=True)
