@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}Discovery Results - Vigilance SOC{% endblock %}
+{% block header_title %}Discovery Results for {{ asset.hostname }}{% endblock %}
+
+{% block content %}
+<section class="glacier-card p-6">
+    <p class="text-xs text-slate-500 mb-6">
+        PCI reference doc, Phase 1 Scoping: "If the ASV finds hidden components
+        not listed by the customer, they must consult the customer." Nothing
+        below has been added to scope yet — select the components that
+        genuinely belong to this customer's Internet-facing environment and
+        confirm.
+    </p>
+
+    {% if not candidates %}
+    <p class="text-sm text-slate-500">No additional components were discovered beyond what's already tracked.</p>
+    <a href="{{ url_for('main.asset_detail', id=asset.id) }}" class="inline-block mt-4 text-xs text-glacier-blue underline">Back to {{ asset.hostname }}</a>
+    {% else %}
+    <form method="POST" action="{{ url_for('main.confirm_discovery', id=asset.id) }}">
+        <table class="w-full text-left text-sm border-separate border-spacing-y-2 mb-6">
+            <thead class="text-xs text-slate-500 uppercase">
+                <tr>
+                    <th class="pb-2 px-2 w-8"></th>
+                    <th class="pb-2 px-2">Host</th>
+                    <th class="pb-2 px-2">IP</th>
+                    <th class="pb-2 px-2">Discovery Method</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for host, info in candidates.items() %}
+                <tr class="glacier-recessed-sm">
+                    <td class="py-2 px-2">
+                        <input type="checkbox" name="confirm" value="{{ host }}|{{ info.ip or '' }}|{{ info.via }}" checked>
+                    </td>
+                    <td class="py-2 px-2 font-mono text-xs">{{ host }}</td>
+                    <td class="py-2 px-2 font-mono text-xs text-slate-500">{{ info.ip or 'unresolved' }}</td>
+                    <td class="py-2 px-2 text-xs uppercase text-slate-500">{{ info.via.replace('_', ' ') }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        <div class="flex gap-3">
+            <button type="submit" class="px-5 py-2.5 glacier-btn rounded-xl text-sm font-medium text-slate-700">
+                Add Selected to Scope
+            </button>
+            <a href="{{ url_for('main.asset_detail', id=asset.id) }}" class="px-5 py-2.5 rounded-xl text-sm font-medium text-slate-500 hover:bg-white/40">
+                Cancel
+            </a>
+        </div>
+    </form>
+    {% endif %}
+</section>
+{% endblock %}

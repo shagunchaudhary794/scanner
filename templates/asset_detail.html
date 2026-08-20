@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% block title %}{{ asset.hostname or asset.ip_address }} - Vigilance SOC{% endblock %}
+{% block header_title %}{{ asset.hostname or asset.ip_address }}{% endblock %}
+
+{% block content %}
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+    <section class="glacier-card p-6 lg:col-span-2">
+        <div class="flex items-center justify-between mb-4">
+            <h3 class="text-sm font-semibold text-slate-800 tracking-wider uppercase">Component Details</h3>
+            {% if asset.is_out_of_scope %}
+            <span class="px-3 py-1 rounded-full bg-slate-400/10 text-slate-500 text-xs font-bold uppercase">Out of Scope</span>
+            {% else %}
+            <span class="px-3 py-1 rounded-full bg-emerald-500/10 text-emerald-600 text-xs font-bold uppercase">In Scope</span>
+            {% endif %}
+        </div>
+        <dl class="grid grid-cols-2 gap-4 text-sm mb-4">
+            <div><dt class="text-slate-500 text-xs uppercase">Hostname</dt><dd class="font-mono">{{ asset.hostname or '—' }}</dd></div>
+            <div><dt class="text-slate-500 text-xs uppercase">IP Address</dt><dd class="font-mono">{{ asset.ip_address }}</dd></div>
+            <div><dt class="text-slate-500 text-xs uppercase">Environment</dt><dd class="capitalize">{{ asset.environment or '—' }}</dd></div>
+            <div><dt class="text-slate-500 text-xs uppercase">Criticality</dt><dd class="capitalize">{{ asset.criticality or '—' }}</dd></div>
+            <div><dt class="text-slate-500 text-xs uppercase">Discovered Via</dt><dd class="capitalize">{{ asset.discovered_via.replace('_',' ') }}</dd></div>
+            <div><dt class="text-slate-500 text-xs uppercase">Added</dt><dd class="font-mono">{{ asset.created_at.strftime('%Y-%m-%d') if asset.created_at else '—' }}</dd></div>
+        </dl>
+        {% if asset.is_out_of_scope and asset.segmentation_attestation %}
+        <div class="glacier-recessed-sm p-3 text-xs text-slate-600">
+            <span class="uppercase font-semibold text-slate-500">Segmentation Attestation (§4.2):</span>
+            {{ asset.segmentation_attestation }}
+        </div>
+        {% endif %}
+
+        <form method="POST" action="{{ url_for('main.update_scope', id=asset.id) }}" class="mt-5 pt-5 border-t border-white/40">
+            {% if asset.is_out_of_scope %}
+            <input type="hidden" name="action" value="include">
+            <button type="submit" class="px-4 py-2 rounded-xl bg-emerald-500/10 text-emerald-600 text-xs font-bold uppercase hover:bg-emerald-500/20">
+                Re-include in Scope
+            </button>
+            {% else %}
+            <input type="hidden" name="action" value="exclude">
+            <label class="block text-xs uppercase text-slate-500 mb-1">Segmentation Attestation (required to exclude — §4.2)</label>
+            <textarea name="segmentation_attestation" rows="2" placeholder="Describe the physical/logical network segmentation that isolates this component from the CDE."
+                class="w-full glacier-recessed-sm p-2 text-sm bg-transparent mb-2"></textarea>
+            <button type="submit" class="px-4 py-2 rounded-xl bg-slate-400/10 text-slate-600 text-xs font-bold uppercase hover:bg-slate-400/20">
+                Mark Out of Scope
+            </button>
+            {% endif %}
+        </form>
+    </section>
+
+    <section class="glacier-card p-6">
+        <h3 class="text-sm font-semibold text-slate-800 tracking-wider uppercase mb-2">Discovery (§4.4)</h3>
+        <p class="text-xs text-slate-500 mb-4">
+            Runs DNS forward/reverse lookups of common host names, MX record
+            lookups, and HTTP-redirect tracing against this hostname to surface
+            Internet-facing components not explicitly listed in scope.
+            Discovered items require confirmation before being added.
+        </p>
+        {% if asset.hostname %}
+        <form method="POST" action="{{ url_for('main.discover_assets', id=asset.id) }}">
+            <button type="submit" class="w-full py-2.5 glacier-btn rounded-xl text-sm font-medium text-slate-700">
+                Run Discovery
+            </button>
+        </form>
+        {% else %}
+        <p class="text-xs text-slate-400">This asset has no hostname on record — discovery needs a domain, not just an IP.</p>
+        {% endif %}
+    </section>
+
+    <section class="glacier-card p-6 lg:col-span-3">
+        <h3 class="text-sm font-semibold text-slate-800 tracking-wider uppercase mb-4">Findings on This Component</h3>
+        {% if findings %}
+        <table class="w-full text-left text-sm border-separate border-spacing-y-2">
+            <thead class="text-xs text-slate-500 uppercase">
+                <tr><th class="pb-2 px-2">CVE</th><th class="pb-2 px-2">CVSS</th><th class="pb-2 px-2">Status</th><th class="pb-2 px-2">Tool</th><th class="pb-2 px-2">Description</th></tr>
+            </thead>
+            <tbody>
+                {% for f in findings %}
+                <tr class="glacier-recessed-sm cursor-pointer" onclick="window.location='{{ url_for('main.finding_detail', id=f.id) }}'">
+                    <td class="py-2 px-2 font-mono text-xs">{{ f.cve or '—' }}</td>
+                    <td class="py-2 px-2 font-mono text-xs">{{ '%.1f'|format(f.cvss_score) if f.cvss_score is not none else '—' }}</td>
+                    <td class="py-2 px-2 text-xs">
+                        {% if f.effective_status == 'Fail' %}<span class="text-glacier-red font-bold uppercase">Fail</span>
+                        {% else %}<span class="text-emerald-600 font-bold uppercase">Pass</span>{% endif %}
+                    </td>
+                    <td class="py-2 px-2 text-xs uppercase text-slate-500">{{ f.source_tool }}</td>
+                    <td class="py-2 px-2 text-xs text-slate-600 truncate max-w-[300px]">{{ f.description }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p class="text-sm text-slate-500">No findings recorded for this component yet.</p>
+        {% endif %}
+    </section>
+</div>
+{% endblock %}

@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}Organization Settings - Vigilance SOC{% endblock %}
+{% block header_title %}Organization Profiles{% endblock %}
+
+{% block content %}
+<p class="text-xs text-slate-500 mb-6 max-w-2xl">
+    PCI reference doc §9.1: the Attestation of Scan Compliance cover sheet
+    requires both Scan Customer Information and ASV Information (Company,
+    Contact, Title, Phone, Email, Address, URL). These two profiles are
+    used to populate that cover sheet on every full PCI report.
+</p>
+<form method="POST" class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+    {% for profile, prefix, label in [(asv, 'asv', 'ASV Information'), (customer, 'customer', 'Scan Customer Information')] %}
+    <section class="glacier-card p-6">
+        <h3 class="text-sm font-semibold text-slate-800 tracking-wider uppercase mb-4">{{ label }}</h3>
+        <div class="space-y-3">
+            <div>
+                <label class="block text-xs uppercase text-slate-500 mb-1">Company</label>
+                <input type="text" name="{{ prefix }}_company_name" value="{{ profile.company_name or '' }}" class="w-full glacier-recessed-sm p-2 text-sm bg-transparent">
+            </div>
+            <div>
+                <label class="block text-xs uppercase text-slate-500 mb-1">Contact Name</label>
+                <input type="text" name="{{ prefix }}_contact_name" value="{{ profile.contact_name or '' }}" class="w-full glacier-recessed-sm p-2 text-sm bg-transparent">
+            </div>
+            <div>
+                <label class="block text-xs uppercase text-slate-500 mb-1">Title</label>
+                <input type="text" name="{{ prefix }}_title" value="{{ profile.title or '' }}" class="w-full glacier-recessed-sm p-2 text-sm bg-transparent">
+            </div>
+            <div class="grid grid-cols-2 gap-3">
+                <div>
+                    <label class="block text-xs uppercase text-slate-500 mb-1">Phone</label>
+                    <input type="text" name="{{ prefix }}_phone" value="{{ profile.phone or '' }}" class="w-full glacier-recessed-sm p-2 text-sm bg-transparent">
+                </div>
+                <div>
+                    <label class="block text-xs uppercase text-slate-500 mb-1">Email</label>
+                    <input type="email" name="{{ prefix }}_email" value="{{ profile.email or '' }}" class="w-full glacier-recessed-sm p-2 text-sm bg-transparent">
+                </div>
+            </div>
+            <div>
+                <label class="block text-xs uppercase text-slate-500 mb-1">Address</label>
+                <textarea name="{{ prefix }}_address" rows="2" class="w-full glacier-recessed-sm p-2 text-sm bg-transparent">{{ profile.address or '' }}</textarea>
+            </div>
+            <div>
+                <label class="block text-xs uppercase text-slate-500 mb-1">URL</label>
+                <input type="text" name="{{ prefix }}_url" value="{{ profile.url or '' }}" class="w-full glacier-recessed-sm p-2 text-sm bg-transparent">
+            </div>
+        </div>
+    </section>
+    {% endfor %}
+    <div class="lg:col-span-2">
+        <button type="submit" class="px-6 py-2.5 glacier-btn rounded-xl text-sm font-medium text-slate-700">
+            Save Profiles
+        </button>
+    </div>
+</form>
+{% endblock %}

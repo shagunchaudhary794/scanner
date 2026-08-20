@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+    body { font-family: 'Helvetica', Arial, sans-serif; font-size: 11px; color: #1e293b; margin: 30px; }
+    h1 { font-size: 20px; margin-bottom: 4px; }
+    h2 { font-size: 15px; margin-top: 30px; border-bottom: 2px solid #1e293b; padding-bottom: 6px; }
+    h3 { font-size: 13px; margin-top: 20px; margin-bottom: 6px; }
+    .section-break { page-break-before: always; }
+    .muted { color: #64748b; font-size: 10px; }
+    .pass { color: #059669; font-weight: bold; }
+    .fail { color: #dc2626; font-weight: bold; }
+    table { width: 100%; border-collapse: collapse; margin-top: 8px; margin-bottom: 16px; }
+    th { background: #f1f5f9; text-align: left; padding: 6px 8px; font-size: 9px; text-transform: uppercase; border-bottom: 1px solid #cbd5e1; }
+    td { padding: 6px 8px; font-size: 10px; border-bottom: 1px solid #e2e8f0; vertical-align: top; }
+    .info-grid { display: table; width: 100%; margin-top: 10px; }
+    .info-col { display: table-cell; width: 50%; vertical-align: top; padding-right: 20px; }
+    .info-box { border: 1px solid #cbd5e1; border-radius: 4px; padding: 12px; margin-bottom: 12px; }
+    .info-box dt { font-size: 9px; text-transform: uppercase; color: #64748b; margin-top: 6px; }
+    .info-box dd { margin: 0; font-weight: 500; }
+    .status-banner { text-align: center; padding: 16px; margin: 20px 0; border-radius: 6px; font-size: 18px; font-weight: bold; }
+    .status-banner.pass { background: #ecfdf5; color: #059669; border: 1px solid #a7f3d0; }
+    .status-banner.fail { background: #fef2f2; color: #dc2626; border: 1px solid #fecaca; }
+    .sig-line { margin-top: 40px; border-top: 1px solid #1e293b; width: 300px; padding-top: 4px; font-size: 9px; color: #64748b; }
+    .component-block { margin-bottom: 24px; page-break-inside: avoid; }
+    .component-header { display: flex; justify-content: space-between; align-items: center; background: #f8fafc; padding: 8px 10px; border-radius: 4px; }
+    .exception-note { font-size: 9px; color: #2563eb; font-style: italic; }
+    .auto-fail-tag { background: #dc2626; color: white; font-size: 8px; padding: 1px 4px; border-radius: 3px; margin-left: 4px; }
+</style>
+</head>
+<body>
+
+<!-- ==================== PART 1: ATTESTATION OF SCAN COMPLIANCE (§9.1) ==================== -->
+<h1>Attestation of Scan Compliance</h1>
+<p class="muted">PCI DSS Requirement 11.3.2 &mdash; External Vulnerability Scan</p>
+
+<div class="info-grid">
+    <div class="info-col">
+        <div class="info-box">
+            <strong>Scan Customer Information</strong>
+            <dl>
+                <dt>Company</dt><dd>{{ customer.company_name or 'Not on file' }}</dd>
+                <dt>Contact</dt><dd>{{ customer.contact_name or '—' }}{% if customer.title %}, {{ customer.title }}{% endif %}</dd>
+                <dt>Phone</dt><dd>{{ customer.phone or '—' }}</dd>
+                <dt>Email</dt><dd>{{ customer.email or '—' }}</dd>
+                <dt>Address</dt><dd>{{ customer.address or '—' }}</dd>
+                <dt>URL</dt><dd>{{ customer.url or '—' }}</dd>
+            </dl>
+        </div>
+    </div>
+    <div class="info-col">
+        <div class="info-box">
+            <strong>ASV Information</strong>
+            <dl>
+                <dt>Company</dt><dd>{{ asv.company_name or 'Not on file' }}</dd>
+                <dt>Contact</dt><dd>{{ asv.contact_name or '—' }}{% if asv.title %}, {{ asv.title }}{% endif %}</dd>
+                <dt>Phone</dt><dd>{{ asv.phone or '—' }}</dd>
+                <dt>Email</dt><dd>{{ asv.email or '—' }}</dd>
+                <dt>Address</dt><dd>{{ asv.address or '—' }}</dd>
+                <dt>URL</dt><dd>{{ asv.url or '—' }}</dd>
+            </dl>
+        </div>
+    </div>
+</div>
+
+<h3>Scan Status</h3>
+<table>
+    <tr><th>Date Completed</th><th>Expiration Date</th><th>Scan Type</th><th>Components Scanned</th><th>Failing Vulnerabilities</th><th>Components Excluded</th></tr>
+    <tr>
+        <td>{{ scan.end_time.strftime('%Y-%m-%d') if scan.end_time else report.created_at.strftime('%Y-%m-%d') }}</td>
+        <td>{{ report.expires_at.strftime('%Y-%m-%d') }}</td>
+        <td>{{ scan_type_label }}</td>
+        <td>{{ components_scanned_count }}</td>
+        <td>{{ failing_count }}</td>
+        <td>{{ excluded_count }}</td>
+    </tr>
+</table>
+
+<div class="status-banner {{ 'pass' if overall_result == 'Pass' else 'fail' }}">
+    Overall Result: {{ overall_result }}
+</div>
+
+<p class="muted">
+    A "Pass" only indicates whether the scanned systems are compliant with the
+    external vulnerability scan requirements of PCI DSS Requirement 11.3.2.
+    It does not represent overall compliance status with any other PCI DSS
+    requirement.
+</p>
+
+{% if excluded_assets %}
+<h3>Components Excluded From Scope</h3>
+<table>
+    <tr><th>Component</th><th>Segmentation Attestation</th></tr>
+    {% for a in excluded_assets %}
+    <tr><td>{{ a.hostname or a.ip_address }}</td><td>{{ a.segmentation_attestation or 'On file' }}</td></tr>
+    {% endfor %}
+</table>
+{% endif %}
+
+<div class="info-grid" style="margin-top: 40px;">
+    <div class="info-col">
+        <div class="sig-line">Scan Customer Signature &amp; Date</div>
+    </div>
+    <div class="info-col">
+        <div class="sig-line">ASV Employee Signature &amp; Date</div>
+    </div>
+</div>
+
+<!-- ==================== PART 2: ASV SCAN REPORT SUMMARY (§9.2) ==================== -->
+<div class="section-break"></div>
+<h1>ASV Scan Report Summary</h1>
+<p class="muted">
+    {{ customer.company_name or 'Scan Customer' }} &middot; {{ asv.company_name or 'ASV' }} &middot;
+    Completed {{ scan.end_time.strftime('%Y-%m-%d') if scan.end_time else report.created_at.strftime('%Y-%m-%d') }} &middot;
+    Expires {{ report.expires_at.strftime('%Y-%m-%d') }}
+</p>
+
+{% for c in components %}
+<div class="component-block">
+    <div class="component-header">
+        <strong>{{ c.asset.hostname or c.asset.ip_address }}</strong>
+        <span class="{{ 'pass' if c.status == 'Pass' else 'fail' }}">{{ c.status }}</span>
+    </div>
+    {% if c.findings %}
+    <table>
+        <tr><th>Vulnerability</th><th>CVE</th><th>Severity</th><th>CVSS</th><th>Status</th><th>Exceptions / False Positives / Compensating Controls</th></tr>
+        {% for f in c.findings %}
+        <tr>
+            <td>{{ (f.description or '')[:80] }}{% if f.is_auto_fail %}<span class="auto-fail-tag">AUTO-FAIL</span>{% endif %}</td>
+            <td>{{ f.cve or '—' }}</td>
+            <td>{{ f.severity }}</td>
+            <td>{{ '%.1f'|format(f.cvss_score) if f.cvss_score is not none else 'N/A' }}</td>
+            <td class="{{ 'pass' if f.effective_status == 'Pass' else 'fail' }}">{{ f.effective_status }}</td>
+            <td class="exception-note">{{ f.exception_note }}</td>
+        </tr>
+        {% endfor %}
+    </table>
+    {% else %}
+    <p class="muted">No vulnerabilities identified on this component.</p>
+    {% endif %}
+    {% if c.correction_plan %}
+    <div style="background:#fef2f2; border-radius:4px; padding:8px 10px; margin-top:4px;">
+        <strong style="font-size:9px; text-transform:uppercase; color:#dc2626;">Consolidated Solution / Correction Plan</strong>
+        <ul style="margin:6px 0 0 16px; padding:0; font-size:10px;">
+            {% for item in c.correction_plan %}
+            <li>{{ item }}</li>
+            {% endfor %}
+        </ul>
+    </div>
+    {% endif %}
+</div>
+{% else %}
+<p class="muted">No in-scope components were recorded for this scan.</p>
+{% endfor %}
+
+<!-- ==================== PART 3: ASV SCAN VULNERABILITY DETAILS (§9.3) ==================== -->
+<div class="section-break"></div>
+<h1>ASV Scan Vulnerability Details</h1>
+<p class="muted">
+    {{ customer.company_name or 'Scan Customer' }} &middot; {{ asv.company_name or 'ASV' }} &middot;
+    Completed {{ scan.end_time.strftime('%Y-%m-%d') if scan.end_time else report.created_at.strftime('%Y-%m-%d') }} &middot;
+    Expires {{ report.expires_at.strftime('%Y-%m-%d') }}
+</p>
+
+{% for c in components %}
+{% if c.findings or c.ports %}
+<h3>{{ c.asset.hostname or c.asset.ip_address }}</h3>
+{% if c.ports %}
+<p class="muted">Open ports/services detected: {{ c.ports|join(', ') }}</p>
+{% endif %}
+<table>
+    <tr><th>Severity</th><th>Compliance Status</th><th>CVE</th><th>CVSS (v3.1)</th><th>Detailed Explanation</th></tr>
+    {% for f in c.findings %}
+    <tr>
+        <td>{{ f.severity }}</td>
+        <td class="{{ 'pass' if f.effective_status == 'Pass' else 'fail' }}">{{ f.effective_status }}</td>
+        <td>{{ f.cve or '—' }}</td>
+        <td>{{ '%.1f'|format(f.cvss_score) if f.cvss_score is not none else 'N/A' }} <span class="muted">({{ f.cvss_source or 'n/a' }})</span></td>
+        <td>{{ f.description }}{% if f.recommendation %}<br><em class="muted">Recommendation: {{ f.recommendation }}</em>{% endif %}</td>
+    </tr>
+    {% endfor %}
+</table>
+{% endif %}
+{% endfor %}
+
+</body>
+</html>
