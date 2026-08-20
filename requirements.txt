@@ -1,5 +1,6 @@
 Flask==3.0.3
 Flask-SQLAlchemy==3.1.1
+Flask-Migrate==4.0.7
 psycopg2-binary==2.9.9
 python-dotenv==1.0.1
 celery==5.4.0
@@ -15,3 +16,8 @@ pdfkit==1.0.0
 paramiko==3.4.0      # SSH default-creds check
 pymysql==1.1.1        # MySQL default-creds check
 pymongo==4.7.2         # MongoDB no-auth check
+
+# Discovery / scope validation (discovery.py). dns.resolver is used for
+# reverse lookups and MX records (§4.4); forward A-record lookups use
+# stdlib socket only, so this is the one new dependency.
+dnspython==2.6.1
