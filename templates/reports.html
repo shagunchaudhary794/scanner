@@ -7,6 +7,7 @@
     <div class="p-6 border-b border-white/40 flex justify-between items-center bg-white/20 flex-wrap gap-3">
         <h3 class="text-sm font-semibold text-slate-800 tracking-wider uppercase">Generated Reports</h3>
         <div class="flex gap-3 flex-wrap">
+            {% if current_user.is_asv_staff %}
             <form action="{{ url_for('main.generate_full_report') }}" method="POST" class="flex gap-2 items-center">
                 <select name="scan_id" required class="glacier-recessed-sm text-slate-700 text-xs px-3 py-1.5 outline-none border-none focus:ring-1 focus:ring-glacier-blue/50">
                     <option value="" disabled selected>Select completed scan...</option>
@@ -18,7 +19,14 @@
                     Full PCI Report
                 </button>
             </form>
-            <form action="{{ url_for('main.generate_report') }}" method="POST" class="flex gap-3">
+            {% endif %}
+            <form action="{{ url_for('main.generate_report') }}" method="POST" class="flex gap-2 items-center">
+                <select name="scan_id" required class="glacier-recessed-sm text-slate-700 text-xs px-3 py-1.5 outline-none border-none focus:ring-1 focus:ring-glacier-blue/50">
+                    <option value="" disabled selected>Select scan...</option>
+                    {% for scan in completed_scans %}
+                    <option value="{{ scan.id }}">Scan #{{ scan.id }} ({{ scan.type }})</option>
+                    {% endfor %}
+                </select>
                 <select name="format" class="glacier-recessed-sm text-slate-700 text-xs px-3 py-1.5 outline-none border-none focus:ring-1 focus:ring-glacier-blue/50">
                     <option value="csv">CSV Format</option>
                     <option value="pdf">PDF Format</option>
