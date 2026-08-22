@@ -2,11 +2,13 @@ import os
 from flask import Flask, render_template
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
+from flask_login import LoginManager, current_user
 from config import Config
 
 # Initialize extensions
 db = SQLAlchemy()
 migrate = Migrate()
+login_manager = LoginManager()
 
 def create_app(config_class=Config):
     app = Flask(__name__)
@@ -15,6 +17,15 @@ def create_app(config_class=Config):
     # Initialize Flask extensions here
     db.init_app(app)
     migrate.init_app(app, db)
+    login_manager.init_app(app)
+    login_manager.login_view = 'main.login'
+    login_manager.login_message = 'Please log in to continue.'
+    login_manager.login_message_category = 'error'
+
+    @login_manager.user_loader
+    def load_user(user_id):
+        from models import User
+        return User.query.get(int(user_id))
 
     with app.app_context():
         import models  # noqa: F401 -- registers models on db.metadata
@@ -60,19 +71,36 @@ def create_app(config_class=Config):
     # Register blueprints or routes here
     @app.route('/')
     def index():
+        from flask_login import login_required
+        if not current_user.is_authenticated:
+            from flask import redirect, url_for
+            return redirect(url_for('main.login'))
+
         from models import Asset, Scan, Finding, Agent
+
+        # Tenant scoping: ASV staff see platform-wide totals; a customer
+        # user only ever sees their own organization's numbers.
+        if current_user.is_asv_staff:
+            asset_q = Asset.query
+            scan_q = Scan.query
+            finding_q = Finding.query
+        else:
+            asset_q = Asset.query.filter_by(organization_id=current_user.organization_id)
+            scan_q = Scan.query.filter_by(organization_id=current_user.organization_id)
+            finding_q = Finding.query.join(Scan).filter(Scan.organization_id == current_user.organization_id)
+
         metrics = {
-            'total_assets': Asset.query.count(),
-            'active_scans': Scan.query.filter(Scan.status.in_(['queued', 'running'])).count(),
-            'queued_scans': Scan.query.filter_by(status='queued').count(),
-            'running_scans': Scan.query.filter_by(status='running').count(),
-            'high_critical_findings': Finding.query.filter(Finding.severity.in_(['High', 'Critical'])).count(),
+            'total_assets': asset_q.count(),
+            'active_scans': scan_q.filter(Scan.status.in_(['queued', 'running'])).count(),
+            'queued_scans': scan_q.filter_by(status='queued').count(),
+            'running_scans': scan_q.filter_by(status='running').count(),
+            'high_critical_findings': finding_q.filter(Finding.severity.in_(['High', 'Critical'])).count(),
             'agents_online': Agent.query.filter_by(status='online').count(),
             'total_agents': Agent.query.count()
         }
-        recent_scans = Scan.query.order_by(Scan.created_at.desc()).limit(5).all()
-        recent_findings = Finding.query.order_by(Finding.created_at.desc()).limit(5).all()
-        
+        recent_scans = scan_q.order_by(Scan.created_at.desc()).limit(5).all()
+        recent_findings = finding_q.order_by(Finding.created_at.desc()).limit(5).all()
+
         return render_template('index.html', metrics=metrics, recent_scans=recent_scans, recent_findings=recent_findings)
 
     return app
