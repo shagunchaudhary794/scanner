@@ -40,7 +40,7 @@
         <div class="info-box">
             <strong>Scan Customer Information</strong>
             <dl>
-                <dt>Company</dt><dd>{{ customer.company_name or 'Not on file' }}</dd>
+                <dt>Company</dt><dd>{{ customer.name or 'Not on file' }}</dd>
                 <dt>Contact</dt><dd>{{ customer.contact_name or '—' }}{% if customer.title %}, {{ customer.title }}{% endif %}</dd>
                 <dt>Phone</dt><dd>{{ customer.phone or '—' }}</dd>
                 <dt>Email</dt><dd>{{ customer.email or '—' }}</dd>
@@ -111,7 +111,7 @@
 <div class="section-break"></div>
 <h1>ASV Scan Report Summary</h1>
 <p class="muted">
-    {{ customer.company_name or 'Scan Customer' }} &middot; {{ asv.company_name or 'ASV' }} &middot;
+    {{ customer.name or 'Scan Customer' }} &middot; {{ asv.company_name or 'ASV' }} &middot;
     Completed {{ scan.end_time.strftime('%Y-%m-%d') if scan.end_time else report.created_at.strftime('%Y-%m-%d') }} &middot;
     Expires {{ report.expires_at.strftime('%Y-%m-%d') }}
 </p>
@@ -158,7 +158,7 @@
 <div class="section-break"></div>
 <h1>ASV Scan Vulnerability Details</h1>
 <p class="muted">
-    {{ customer.company_name or 'Scan Customer' }} &middot; {{ asv.company_name or 'ASV' }} &middot;
+    {{ customer.name or 'Scan Customer' }} &middot; {{ asv.company_name or 'ASV' }} &middot;
     Completed {{ scan.end_time.strftime('%Y-%m-%d') if scan.end_time else report.created_at.strftime('%Y-%m-%d') }} &middot;
     Expires {{ report.expires_at.strftime('%Y-%m-%d') }}
 </p>
