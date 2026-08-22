@@ -156,10 +156,12 @@
                     <svg class="w-5 h-5 opacity-70" fill="none" stroke="currentColor" viewbox="0 0 24 24"><path d="M20.618 5.984A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016zM12 9v2m0 4h.01" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"></path></svg>
                     Findings
                 </a>
+                {% if current_user.is_authenticated and current_user.is_asv_staff %}
                 <a class="flex items-center gap-4 px-5 py-3 rounded-xl {% if request.endpoint == 'main.disputes' or request.endpoint == 'main.finding_detail' %}glacier-nav-active text-glacier-blue font-medium{% else %}hover:bg-white/40 text-slate-600 hover:text-slate-900 transition-all duration-300{% endif %}" href="{{ url_for('main.disputes') }}">
                     <svg class="w-5 h-5 opacity-70" fill="none" stroke="currentColor" viewbox="0 0 24 24"><path d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-6l-4 4v-4z" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"></path></svg>
                     Disputes
                 </a>
+                {% endif %}
                 <a class="flex items-center gap-4 px-5 py-3 rounded-xl {% if request.endpoint == 'main.reports' %}glacier-nav-active text-glacier-blue font-medium{% else %}hover:bg-white/40 text-slate-600 hover:text-slate-900 transition-all duration-300{% endif %}" href="{{ url_for('main.reports') }}">
                     <svg class="w-5 h-5 opacity-70" fill="none" stroke="currentColor" viewbox="0 0 24 24"><path d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"></path></svg>
                     Reports
@@ -168,16 +170,32 @@
                     <svg class="w-5 h-5 opacity-70" fill="none" stroke="currentColor" viewbox="0 0 24 24"><path d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"></path></svg>
                     Agents
                 </a>
-                <a class="flex items-center gap-4 px-5 py-3 rounded-xl {% if request.endpoint == 'main.org_settings' %}glacier-nav-active text-glacier-blue font-medium{% else %}hover:bg-white/40 text-slate-600 hover:text-slate-900 transition-all duration-300{% endif %}" href="{{ url_for('main.org_settings') }}">
+                {% if current_user.is_authenticated and current_user.is_asv_staff %}
+                <a class="flex items-center gap-4 px-5 py-3 rounded-xl {% if request.endpoint == 'main.organizations' %}glacier-nav-active text-glacier-blue font-medium{% else %}hover:bg-white/40 text-slate-600 hover:text-slate-900 transition-all duration-300{% endif %}" href="{{ url_for('main.organizations') }}">
+                    <svg class="w-5 h-5 opacity-70" fill="none" stroke="currentColor" viewbox="0 0 24 24"><path d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2M5 21H3m4-14h.01M11 7h.01M15 7h.01M7 11h.01M11 11h.01M15 11h.01M7 15h.01M11 15h.01M15 15h.01" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"></path></svg>
+                    Organizations
+                </a>
+                {% endif %}
+                {% if current_user.is_authenticated and (current_user.is_asv_staff or current_user.role == 'admin') %}
+                <a class="flex items-center gap-4 px-5 py-3 rounded-xl {% if request.endpoint == 'main.audit_logs' %}glacier-nav-active text-glacier-blue font-medium{% else %}hover:bg-white/40 text-slate-600 hover:text-slate-900 transition-all duration-300{% endif %}" href="{{ url_for('main.audit_logs') }}">
+                    <svg class="w-5 h-5 opacity-70" fill="none" stroke="currentColor" viewbox="0 0 24 24"><path d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"></path></svg>
+                    Audit Log
+                </a>
+                {% endif %}
+                {% if current_user.is_authenticated and (current_user.is_asv_staff or current_user.role == 'admin') %}
+                <a class="flex items-center gap-4 px-5 py-3 rounded-xl {% if request.endpoint in ['main.org_settings', 'main.asv_settings', 'main.manage_users'] %}glacier-nav-active text-glacier-blue font-medium{% else %}hover:bg-white/40 text-slate-600 hover:text-slate-900 transition-all duration-300{% endif %}" href="{{ url_for('main.asv_settings') if current_user.is_asv_staff else url_for('main.org_settings') }}">
                     <svg class="w-5 h-5 opacity-70" fill="none" stroke="currentColor" viewbox="0 0 24 24"><path d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"></path><circle cx="12" cy="12" r="3" stroke-width="1.5"></circle></svg>
                     Settings
                 </a>
+                {% endif %}
             </nav>
         </div>
+        {% if current_user.is_authenticated and current_user.role in ['admin', 'analyst'] %}
         <a href="{{ url_for('main.new_scan') }}" class="w-full py-3.5 flex items-center justify-center gap-2 text-sm font-medium text-slate-700 glacier-btn rounded-xl">
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewbox="0 0 24 24"><path d="M12 6v6m0 0v6m0-6h6m-6 0H6" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path></svg>
             New Scan
         </a>
+        {% endif %}
     </aside>
 
     <!-- Main Content Area -->
@@ -203,8 +221,19 @@
                     </button>
                 </div>
                 <div class="h-8 w-px bg-slate-300/50"></div>
-                <div class="w-10 h-10 rounded-full bg-slate-200 overflow-hidden border-2 border-white shadow-sm ml-2">
-                    <img alt="User Avatar" class="w-full h-full object-cover" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAwElZgKdYFgeoWGqKdgpdlafwAE-tWCElhwtZYQ9xolpSVb7dniH09gpqNIh7cM_PDTi1gENYKFRt8zqztOGxoNR8NtDHpr9ms8OyTSaNmmIr3h4nfLVK3yakraC0lb9dutRyoZZ8elLsse8EWeNwFLnSOwrcl0tAI5Xxii6jKrUmgNAhemRDYdZQXR-PSQeOnqvsE8Rf3ZLcIh85jlDDvyJvxBf53xTOrhUJO27bZ9cAy9Bz9uBG3"/>
+                <div class="flex items-center gap-3">
+                    <div class="text-right">
+                        <p class="text-sm font-medium text-slate-700">{{ current_user.email }}</p>
+                        <p class="text-xs text-slate-400 uppercase tracking-wide">
+                            {% if current_user.is_asv_staff %}ASV Staff{% else %}{{ current_user.role }} · {{ current_user.organization.name }}{% endif %}
+                        </p>
+                    </div>
+                    <div class="w-10 h-10 rounded-full glacier-recessed-sm flex items-center justify-center text-glacier-blue font-semibold text-sm">
+                        {{ current_user.email[0]|upper }}
+                    </div>
+                    <a href="{{ url_for('main.logout') }}" title="Log out" class="ml-1 text-slate-400 hover:text-glacier-red transition-colors">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewbox="0 0 24 24"><path d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"></path></svg>
+                    </a>
                 </div>
             </div>
         </header>
