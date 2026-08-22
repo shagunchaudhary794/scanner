@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}Users - Vigilance SOC{% endblock %}
+{% block header_title %}Team Members{% endblock %}
+
+{% block content %}
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+    <section class="glacier-card p-6 lg:col-span-2">
+        <h3 class="text-sm font-semibold text-slate-800 tracking-wider uppercase mb-4">Your Organization's Users</h3>
+        <table class="w-full text-left text-sm border-separate border-spacing-y-2">
+            <thead class="text-xs text-slate-500 uppercase">
+                <tr><th class="pb-2 px-2">Email</th><th class="pb-2 px-2">Role</th><th class="pb-2 px-2">Last Login</th><th class="pb-2 px-2">Status</th></tr>
+            </thead>
+            <tbody>
+                {% for u in users %}
+                <tr class="glacier-recessed-sm">
+                    <td class="py-2 px-2 font-medium">{{ u.email }}</td>
+                    <td class="py-2 px-2 text-xs uppercase text-slate-500">{{ u.role }}</td>
+                    <td class="py-2 px-2 text-xs text-slate-400 font-mono">{{ u.last_login_at.strftime('%Y-%m-%d %H:%M') if u.last_login_at else 'Never' }}</td>
+                    <td class="py-2 px-2 text-xs">
+                        {% if u.is_active_user %}<span class="text-emerald-600 font-bold uppercase">Active</span>
+                        {% else %}<span class="text-slate-400 font-bold uppercase">Disabled</span>{% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </section>
+
+    <section class="glacier-card p-6">
+        <h3 class="text-sm font-semibold text-slate-800 tracking-wider uppercase mb-4">Add Team Member</h3>
+        <form method="POST" class="space-y-3">
+            <div>
+                <label class="block text-xs uppercase text-slate-500 mb-1">Email</label>
+                <input type="email" name="email" required class="w-full glacier-recessed-sm p-2 text-sm bg-transparent">
+            </div>
+            <div>
+                <label class="block text-xs uppercase text-slate-500 mb-1">Password (min. 8 chars)</label>
+                <input type="password" name="password" required minlength="8" class="w-full glacier-recessed-sm p-2 text-sm bg-transparent">
+            </div>
+            <div>
+                <label class="block text-xs uppercase text-slate-500 mb-1">Role</label>
+                <select name="role" class="w-full glacier-recessed-sm p-2 text-sm bg-transparent">
+                    <option value="admin">Admin — full access</option>
+                    <option value="analyst" selected>Analyst — scans, findings, disputes</option>
+                    <option value="executive">Executive — read-only reports</option>
+                </select>
+            </div>
+            <button type="submit" class="w-full py-2.5 glacier-btn rounded-xl text-sm font-medium text-slate-700">
+                Create User
+            </button>
+        </form>
+    </section>
+</div>
+{% endblock %}

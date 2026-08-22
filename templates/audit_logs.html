@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Audit Log - Vigilance SOC{% endblock %}
+{% block header_title %}Audit Log{% endblock %}
+
+{% block content %}
+<section class="glacier-card overflow-hidden">
+    <table class="w-full text-left text-sm">
+        <thead class="text-xs text-slate-500 uppercase border-b border-white/40">
+            <tr>
+                <th class="py-3 px-4">Time</th>
+                <th class="py-3 px-4">User</th>
+                {% if current_user.is_asv_staff %}<th class="py-3 px-4">Organization</th>{% endif %}
+                <th class="py-3 px-4">Action</th>
+                <th class="py-3 px-4">Entity</th>
+                <th class="py-3 px-4">Details</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for log in logs %}
+            <tr class="border-b border-white/20 hover:bg-white/30">
+                <td class="py-2.5 px-4 font-mono text-xs text-slate-500">{{ log.created_at.strftime('%Y-%m-%d %H:%M:%S') if log.created_at else '—' }}</td>
+                <td class="py-2.5 px-4 text-xs">{{ log.user.email if log.user else 'system' }}</td>
+                {% if current_user.is_asv_staff %}
+                <td class="py-2.5 px-4 text-xs text-slate-500">{{ log.organization.name if log.organization else '—' }}</td>
+                {% endif %}
+                <td class="py-2.5 px-4 text-xs font-bold uppercase text-glacier-blue">{{ log.action }}</td>
+                <td class="py-2.5 px-4 text-xs text-slate-500 font-mono">{{ log.entity_type }}{% if log.entity_id %} #{{ log.entity_id }}{% endif %}</td>
+                <td class="py-2.5 px-4 text-xs text-slate-600">{{ log.details or '' }}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="6" class="py-6 px-4 text-center text-slate-500">No audit events recorded yet.</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</section>
+{% endblock %}

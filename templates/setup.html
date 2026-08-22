@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8"/>
+    <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+    <title>Initial Setup - Vigilance SOC</title>
+    <script src="https://cdn.tailwindcss.com?plugins=forms"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet"/>
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #f0f4f8;
+            background-image: radial-gradient(circle at 0% 0%, #ffffff 0%, transparent 50%), radial-gradient(circle at 100% 100%, #e0e8f0 0%, transparent 50%); }
+        .glacier-card { background: rgba(255,255,255,0.6); backdrop-filter: blur(16px); border: 1px solid rgba(255,255,255,0.7);
+            box-shadow: 10px 10px 30px rgba(180,195,210,0.4), -10px -10px 30px rgba(255,255,255,0.8); border-radius: 16px; }
+        .glacier-recessed-sm { background: rgba(240,244,248,0.5); border: 1px solid rgba(255,255,255,0.3);
+            box-shadow: inset 2px 2px 8px rgba(180,195,210,0.4), inset -2px -2px 8px rgba(255,255,255,0.8); border-radius: 8px; }
+    </style>
+</head>
+<body class="min-h-screen flex items-center justify-center p-6">
+    <div class="w-full max-w-md">
+        <div class="text-center mb-8">
+            <h1 class="font-semibold text-sm tracking-widest text-slate-800 uppercase">Vigilance</h1>
+            <p class="text-xs text-slate-500 mt-1">Initial platform setup</p>
+        </div>
+
+        <p class="text-xs text-slate-500 mb-4 text-center max-w-sm mx-auto">
+            No accounts exist yet. Create the first ASV staff account — this is
+            the platform-side role that reviews disputes and issues signed PCI
+            reports across every scan customer you onboard.
+        </p>
+
+        {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+        {% for category, message in messages %}
+        <div class="mb-4 px-4 py-3 rounded-lg border {% if category == 'error' %}border-red-400/40 bg-red-500/10 text-red-600{% else %}border-blue-400/40 bg-blue-500/10 text-blue-600{% endif %} text-sm">
+            {{ message }}
+        </div>
+        {% endfor %}
+        {% endif %}
+        {% endwith %}
+
+        <form method="POST" class="glacier-card p-8 space-y-4">
+            <div>
+                <label class="block text-xs uppercase text-slate-500 mb-1">ASV Staff Email</label>
+                <input type="email" name="email" required autofocus class="w-full glacier-recessed-sm p-3 text-sm bg-transparent outline-none">
+            </div>
+            <div>
+                <label class="block text-xs uppercase text-slate-500 mb-1">Password (min. 8 characters)</label>
+                <input type="password" name="password" required minlength="8" class="w-full glacier-recessed-sm p-3 text-sm bg-transparent outline-none">
+            </div>
+            <button type="submit" class="w-full py-3 rounded-xl bg-slate-800 text-white text-sm font-medium hover:bg-slate-700 transition-colors">
+                Create ASV Staff Account
+            </button>
+        </form>
+    </div>
+</body>
+</html>

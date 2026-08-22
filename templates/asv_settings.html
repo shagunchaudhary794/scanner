@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}ASV Settings - Vigilance SOC{% endblock %}
+{% block header_title %}ASV Profile{% endblock %}
+
+{% block content %}
+<p class="text-xs text-slate-500 mb-6 max-w-2xl">
+    PCI reference doc §9.1: the Attestation of Scan Compliance cover sheet
+    requires ASV Information (Company, Contact, Title, Phone, Email,
+    Address, URL). There is exactly one ASV profile — it's used on every
+    customer's report.
+</p>
+<form method="POST" class="max-w-xl">
+    <section class="glacier-card p-6">
+        <div class="space-y-3">
+            <div>
+                <label class="block text-xs uppercase text-slate-500 mb-1">Company</label>
+                <input type="text" name="company_name" value="{{ asv.company_name or '' }}" class="w-full glacier-recessed-sm p-2 text-sm bg-transparent">
+            </div>
+            <div>
+                <label class="block text-xs uppercase text-slate-500 mb-1">Contact Name</label>
+                <input type="text" name="contact_name" value="{{ asv.contact_name or '' }}" class="w-full glacier-recessed-sm p-2 text-sm bg-transparent">
+            </div>
+            <div>
+                <label class="block text-xs uppercase text-slate-500 mb-1">Title</label>
+                <input type="text" name="title" value="{{ asv.title or '' }}" class="w-full glacier-recessed-sm p-2 text-sm bg-transparent">
+            </div>
+            <div class="grid grid-cols-2 gap-3">
+                <div>
+                    <label class="block text-xs uppercase text-slate-500 mb-1">Phone</label>
+                    <input type="text" name="phone" value="{{ asv.phone or '' }}" class="w-full glacier-recessed-sm p-2 text-sm bg-transparent">
+                </div>
+                <div>
+                    <label class="block text-xs uppercase text-slate-500 mb-1">Email</label>
+                    <input type="email" name="email" value="{{ asv.email or '' }}" class="w-full glacier-recessed-sm p-2 text-sm bg-transparent">
+                </div>
+            </div>
+            <div>
+                <label class="block text-xs uppercase text-slate-500 mb-1">Address</label>
+                <textarea name="address" rows="2" class="w-full glacier-recessed-sm p-2 text-sm bg-transparent">{{ asv.address or '' }}</textarea>
+            </div>
+            <div>
+                <label class="block text-xs uppercase text-slate-500 mb-1">URL</label>
+                <input type="text" name="url" value="{{ asv.url or '' }}" class="w-full glacier-recessed-sm p-2 text-sm bg-transparent">
+            </div>
+        </div>
+    </section>
+    <button type="submit" class="mt-4 px-6 py-2.5 glacier-btn rounded-xl text-sm font-medium text-slate-700">
+        Save ASV Profile
+    </button>
+</form>
+{% endblock %}
