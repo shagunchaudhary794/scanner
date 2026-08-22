@@ -1,8 +1,97 @@
 from datetime import datetime
 from app import db
+from flask_login import UserMixin
+from werkzeug.security import generate_password_hash, check_password_hash
+
+class Organization(db.Model):
+    """A scan customer / tenant. PCI reference doc §9.1's 'Scan Customer
+    Information' (Company, Contact, Title, Phone, Email, Address, URL)
+    lives here now instead of on the old single-tenant OrgProfile. There
+    is exactly one ASV (this platform) serving many Organizations -- see
+    AsvProfile below, which is a single global row, not per-organization.
+    """
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(255), nullable=False)
+    contact_name = db.Column(db.String(255), nullable=True)
+    title = db.Column(db.String(255), nullable=True)
+    phone = db.Column(db.String(50), nullable=True)
+    email = db.Column(db.String(255), nullable=True)
+    address = db.Column(db.Text, nullable=True)
+    url = db.Column(db.String(255), nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    users = db.relationship('User', backref='organization', lazy=True)
+
+
+class User(UserMixin, db.Model):
+    """Two distinct kinds of account, distinguished by role and by
+    whether organization_id is set:
+
+    - Customer-side (organization_id NOT NULL): 'admin' | 'analyst' |
+      'executive', scoped to exactly one Organization. Matches the
+      architecture doc's Authorization Model -- admin manages
+      users/scans/assets, analyst executes scans and submits disputes,
+      executive is read-only.
+    - ASV-side (organization_id IS NULL): 'asv_staff'. Works across every
+      Organization. This is the only role allowed to decide disputes
+      (§8: 'Qualified ASV Employees must examine the customer's
+      evidence') or issue the final signed PCI report (§46.3:
+      'Only an Authorized ASV Security Analyst... may issue the final
+      PCI report'). A customer-side 'analyst' is NOT the same actor as
+      an ASV analyst -- conflating them was the gap this fixes.
+    """
+    id = db.Column(db.Integer, primary_key=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organization.id'), nullable=True)
+    email = db.Column(db.String(255), unique=True, nullable=False)
+    password_hash = db.Column(db.String(255), nullable=False)
+    role = db.Column(db.String(20), nullable=False)  # admin | analyst | executive | asv_staff
+    is_active_user = db.Column(db.Boolean, default=True)  # 'is_active' name is reserved by UserMixin
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    last_login_at = db.Column(db.DateTime, nullable=True)
+
+    def set_password(self, password):
+        self.password_hash = generate_password_hash(password)
+
+    def check_password(self, password):
+        return check_password_hash(self.password_hash, password)
+
+    @property
+    def is_active(self):
+        # Overrides UserMixin.is_active (which just returns True) so a
+        # deactivated account can't log in even with a valid password.
+        return self.is_active_user
+
+    @property
+    def is_asv_staff(self):
+        return self.role == 'asv_staff'
+
+    def can_access_organization(self, organization_id):
+        """ASV staff can see every tenant; customer-side users can only
+        ever see their own. Every route that loads tenant data checks
+        this rather than trusting the URL/form alone."""
+        return self.is_asv_staff or self.organization_id == organization_id
+
+
+class AuditLog(db.Model):
+    """Architecture doc §47: 'All mutating routes must write to
+    audit_logs.' organization_id is nullable because some actions (ASV
+    staff editing the global AsvProfile, an ASV staff login) aren't
+    scoped to a single tenant. user_id is nullable for the same reason
+    plus system-initiated actions with no human actor.
+    """
+    id = db.Column(db.Integer, primary_key=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organization.id'), nullable=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
+    action = db.Column(db.String(100), nullable=False)       # e.g. 'ASSET_CREATED', 'DISPUTE_APPROVED'
+    entity_type = db.Column(db.String(50), nullable=True)    # e.g. 'Asset', 'Dispute'
+    entity_id = db.Column(db.Integer, nullable=True)
+    details = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
 
 class Asset(db.Model):
     id = db.Column(db.Integer, primary_key=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organization.id'), nullable=False)
     hostname = db.Column(db.String(255), nullable=True)
     ip_address = db.Column(db.String(50), nullable=False)
     environment = db.Column(db.String(50), nullable=True) # e.g., Production, Staging
@@ -32,6 +121,7 @@ class Asset(db.Model):
 
 class Scan(db.Model):
     id = db.Column(db.Integer, primary_key=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organization.id'), nullable=False)
     type = db.Column(db.String(50), nullable=False) # 'internal' or 'external'
     status = db.Column(db.String(50), default='queued') # queued, running, completed, failed
     progress = db.Column(db.String(255), nullable=True)
@@ -166,6 +256,7 @@ class Agent(db.Model):
 
 class Report(db.Model):
     id = db.Column(db.Integer, primary_key=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organization.id'), nullable=False)
     type = db.Column(db.String(100), nullable=False) # Executive Summary, Technical Findings, etc.
     format = db.Column(db.String(20), nullable=False) # pdf, csv
     status = db.Column(db.String(50), default='generating') # generating, completed, failed
@@ -202,17 +293,17 @@ class Report(db.Model):
         return self.expires_at is not None and datetime.utcnow() > self.expires_at
 
 
-class OrgProfile(db.Model):
-    """§9.1: the Attestation of Scan Compliance requires both Scan
-    Customer Information and ASV Information (Company, Contact, Title,
-    Phone, Email, Address, URL) on the cover sheet. This repo is
-    single-tenant (multi-tenancy lives in the separate control-plane
-    project), so this is a simple two-row table -- one row with
-    role='asv', one with role='customer' -- rather than a full
-    organizations table.
+class AsvProfile(db.Model):
+    """§9.1: the Attestation of Scan Compliance cover sheet requires ASV
+    Information (Company, Contact, Title, Phone, Email, Address, URL).
+    There is exactly one ASV -- this platform -- serving every
+    Organization, so this is a single global row (id=1 by convention),
+    not per-tenant. Formerly 'OrgProfile' with a role column
+    distinguishing 'asv' vs 'customer' rows; customer info now lives on
+    Organization since multi-tenancy means there are many customers, not
+    one.
     """
     id = db.Column(db.Integer, primary_key=True)
-    role = db.Column(db.String(20), nullable=False, unique=True)  # 'asv' | 'customer'
     company_name = db.Column(db.String(255), nullable=True)
     contact_name = db.Column(db.String(255), nullable=True)
     title = db.Column(db.String(255), nullable=True)
