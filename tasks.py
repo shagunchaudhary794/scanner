@@ -4,7 +4,7 @@ import subprocess
 import tempfile
 import time
 import xml.etree.ElementTree as ET
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import requests
 from celery import Celery
@@ -12,6 +12,7 @@ from config import Config
 
 import cvss_engine
 import eol_os
+import lock_manager
 from default_creds import run_default_creds_scan
 
 # Initialize Celery app
@@ -20,6 +21,22 @@ celery = Celery(
     broker=Config.CELERY_BROKER_URL,
     backend=Config.CELERY_RESULT_BACKEND
 )
+
+# Orchestration engine doc §13/§19: the scheduler evaluates pending/
+# retry-eligible jobs on a short fixed interval, and quarterly-schedule
+# due-checks run far less often since the coarsest schedule granularity
+# is weekly. Run `celery -A tasks.celery beat` alongside the worker for
+# these to actually fire -- a worker process alone does not execute
+# beat_schedule entries.
+celery.conf.beat_schedule = {
+    'scheduler-tick': {'task': 'tasks.scheduler_tick', 'schedule': 5.0},
+    'check-scan-schedules': {'task': 'tasks.check_scan_schedules', 'schedule': 3600.0},
+}
+celery.conf.timezone = 'UTC'
+
+# §19 Retry Strategy exact table: 2, 4, 8, 16, 30s (capped).
+RETRY_BACKOFF_SECONDS = [2, 4, 8, 16, 30]
+MAX_ATTEMPTS = 5
 
 # Ports treated as web (ZAP candidates) / TLS (testssl.sh candidates) when Nmap
 # doesn't resolve a service name for them.
@@ -54,73 +71,254 @@ def _make_finding(db, Finding, scan_id, asset_id, severity, cve, description,
     )
 
 
+def create_scan_jobs(scan_id, asset_ids):
+    """Plain DB write, not a Celery task -- decomposing a Scan into
+    per-asset ScanJobs (orchestration doc §14) is trivial and synchronous;
+    only the actual scanning work needs to go through Celery. Jobs start
+    in 'pending' and are picked up by scheduler_tick, not dispatched
+    directly here -- the scheduler is the single place that decides when
+    a job is actually allowed to run (lock + agent availability).
+    """
+    from app import db
+    from models import ScanJob
+    for asset_id in asset_ids:
+        db.session.add(ScanJob(scan_id=scan_id, asset_id=asset_id, status='pending'))
+    db.session.commit()
+
+
+def _recompute_scan_status(scan, db):
+    """Rolls the parent Scan's status/progress up from its ScanJobs.
+    Called after every job state transition. Reuses the existing
+    queued/running/completed/failed vocabulary rather than introducing
+    new Scan-level states -- a scan with some aborted jobs is reported as
+    'completed' with error_message populated (existing §9.1 Full/Partial
+    logic in routes.py already reads error_message to distinguish that).
+    """
+    from models import ScanJob
+    jobs = ScanJob.query.filter_by(scan_id=scan.id).all()
+    if not jobs:
+        return
+
+    statuses = {j.status for j in jobs}
+    non_terminal = {'pending', 'running', 'retry_scheduled'}
+
+    if statuses & non_terminal:
+        scan.status = 'running'
+        done = sum(1 for j in jobs if j.status in ('completed', 'failed', 'aborted'))
+        scan.progress_percent = int(5 + 90 * (done / len(jobs)))
+        scan.progress = f"{done}/{len(jobs)} asset jobs finished"
+    else:
+        aborted = [j for j in jobs if j.status == 'aborted']
+        scan.status = 'completed'
+        scan.progress_percent = 100
+        if aborted:
+            asset_ids = ', '.join(str(j.asset_id) for j in aborted)
+            scan.error_message = (
+                f"{len(aborted)} of {len(jobs)} asset job(s) exhausted all retry "
+                f"attempts and were aborted (asset IDs: {asset_ids}). Scan is Partial."
+            )
+            scan.progress = f"Completed with {len(aborted)} aborted job(s)"
+        else:
+            scan.progress = "Completed"
+        scan.end_time = datetime.utcnow()
+
+
 @celery.task
-def execute_scan(scan_id, scan_type, asset_ids):
+def scheduler_tick():
+    """The scheduler (orchestration doc §12/§18/§20). Runs every 5s via
+    Celery Beat. This is the ONLY place that dispatches a ScanJob to a
+    worker -- jobs never self-schedule. Each tick:
+
+        1. Fetch every job in 'pending' or 'retry_scheduled' (whose
+           next_retry_at has passed), ordered by priority then age.
+        2. For each: try to find an online Agent matching the scan's
+           type, and try to acquire that asset's Redis lock.
+        3. Only if BOTH succeed does the job get dispatched
+           (execute_scan_job.delay) and marked 'running'.
+        4. Otherwise the job is left exactly as it was for the next tick
+           -- no attempt is consumed by lock contention or agent
+           unavailability. attempt_number only increases on an actual
+           execution failure (see execute_scan_job), matching §19's
+           retry table being about failed *executions*, not queueing
+           delay. This is Strategy 3 (Non-Blocking Lock) from §15: the
+           scheduler never blocks waiting for a lock, it just tries the
+           next job.
+    """
     from app import create_app, db
-    from models import Scan, Finding, Asset
+    from models import ScanJob, Scan, Agent
 
     app = create_app()
     with app.app_context():
-        scan = Scan.query.get(scan_id)
-        if not scan:
+        now = datetime.utcnow()
+        candidates = ScanJob.query.filter(
+            db.or_(
+                ScanJob.status == 'pending',
+                db.and_(ScanJob.status == 'retry_scheduled', ScanJob.next_retry_at <= now)
+            )
+        ).order_by(ScanJob.priority.asc(), ScanJob.created_at.asc()).all()
+
+        for job in candidates:
+            scan = Scan.query.get(job.scan_id)
+            if not scan:
+                continue
+
+            agent = Agent.query.filter_by(type=scan.type, status='online').first()
+            if not agent:
+                continue  # no capacity right now -- try again next tick
+
+            token = lock_manager.acquire_lock(job.asset_id)
+            if not token:
+                continue  # another job is currently working this asset -- try again next tick
+
+            job.status = 'running'
+            job.assigned_agent_id = agent.id
+            job.started_at = now
+            job.attempt_number += 1
+            db.session.commit()
+
+            async_result = execute_scan_job.delay(job.id, token)
+            job.celery_task_id = async_result.id
+            db.session.commit()
+
+
+@celery.task
+def check_scan_schedules():
+    """PCI reference doc §10: quarterly scan cadence. Runs hourly (fine
+    granularity isn't needed -- the coarsest frequency is weekly). Any
+    ScanSchedule whose next_run has passed gets turned into a real Scan
+    covering every currently in-scope Asset for that organization, then
+    next_run/last_run are advanced.
+    """
+    from app import create_app, db
+    from models import ScanSchedule, Scan, Asset, ScanTarget
+
+    app = create_app()
+    with app.app_context():
+        now = datetime.utcnow()
+        due = ScanSchedule.query.filter(
+            ScanSchedule.enabled == True,  # noqa: E712
+            ScanSchedule.next_run <= now
+        ).all()
+
+        for schedule in due:
+            in_scope_assets = Asset.query.filter_by(
+                organization_id=schedule.organization_id, is_out_of_scope=False
+            ).all()
+
+            if in_scope_assets:
+                scan = Scan(organization_id=schedule.organization_id, type=schedule.scan_type, status='queued')
+                db.session.add(scan)
+                db.session.flush()
+                for asset in in_scope_assets:
+                    db.session.add(ScanTarget(scan_id=scan.id, asset_id=asset.id))
+                db.session.commit()
+                create_scan_jobs(scan.id, [a.id for a in in_scope_assets])
+
+            schedule.last_run = now
+            if schedule.frequency == 'weekly':
+                schedule.next_run = now + timedelta(weeks=1)
+            elif schedule.frequency == 'monthly':
+                schedule.next_run = now + timedelta(days=30)
+            else:  # quarterly -- matches PCI's "at least once every three months"
+                schedule.next_run = now + timedelta(days=90)
+            db.session.commit()
+
+
+@celery.task(bind=True)
+def execute_scan_job(self, job_id, lock_token):
+    """Runs one asset's full pipeline. This is the direct successor to
+    the old execute_scan's per-asset loop body -- the tool-execution
+    logic (_run_nmap_scan etc.) is completely unchanged, only the
+    surrounding job-lifecycle/locking/retry machinery is new.
+    """
+    from app import create_app, db
+    from models import ScanJob, Scan, Asset, Finding, JobExecution
+
+    app = create_app()
+    with app.app_context():
+        job = ScanJob.query.get(job_id)
+        if not job:
+            # Should never happen in practice. We don't know the asset_id
+            # without the job row, so we can't release the lock directly --
+            # its TTL (§15 Strategy 4) is the safety net here.
+            print(f"execute_scan_job: ScanJob {job_id} no longer exists, relying on lock TTL expiry")
             return
 
-        scan.status = 'running'
-        scan.progress = 'Initializing scan...'
-        scan.progress_percent = 5
-        scan.start_time = datetime.utcnow()
+        scan = Scan.query.get(job.scan_id)
+        asset = Asset.query.get(job.asset_id)
+
+        execution = JobExecution(
+            scan_job_id=job.id, agent_id=job.assigned_agent_id,
+            attempt_number=job.attempt_number, started_at=datetime.utcnow(), status='running'
+        )
+        db.session.add(execution)
         db.session.commit()
 
+        if scan.start_time is None:
+            scan.start_time = datetime.utcnow()
+            scan.status = 'running'
+            db.session.commit()
+
         try:
-            for asset_id in asset_ids:
-                asset = Asset.query.get(asset_id)
-                if not asset:
-                    continue
+            if not asset:
+                raise Exception(f"Asset {job.asset_id} no longer exists")
 
-                target = asset.ip_address or asset.hostname
-                if not target:
-                    continue
+            target = asset.ip_address or asset.hostname
+            if not target:
+                raise Exception(f"Asset {job.asset_id} has no IP or hostname to scan")
 
-                # Nmap always runs first. It's the baseline discovery layer:
-                # host/port/service/OS fingerprinting (PCI §5.1-5.3), and every
-                # downstream tool below targets the ports it finds.
-                open_ports = _run_nmap_scan(scan.id, asset_id, target, db, Finding)
+            # Nmap always runs first -- baseline discovery layer (PCI
+            # §5.1-5.3); everything downstream targets the ports it finds.
+            open_ports = _run_nmap_scan(scan.id, asset.id, target, db, Finding)
 
-                # PCI §6.1: known vendor default accounts/passwords, tested
-                # (not brute-forced) against services Nmap found open.
-                # Applies to both external and internal scans since the
-                # underlying services are the same regardless of scan path.
-                _run_default_creds_check(scan.id, asset_id, target, open_ports, db, Finding)
+            # PCI §6.1: known vendor default accounts/passwords, tested
+            # (not brute-forced) against services Nmap found open.
+            _run_default_creds_check(scan.id, asset.id, target, open_ports, db, Finding)
 
-                if scan_type == 'external':
-                    # PCI DSS 11.3.2 external scan pipeline.
-                    _run_testssl_scan(scan.id, asset_id, target, open_ports, db, Finding)
-                    _run_zap_scan(scan.id, asset_id, target, open_ports, db, Finding)
-                    _run_nuclei_scan(scan.id, asset_id, target, db, Finding)
-                    _run_openvas_scan(scan.id, asset_id, target, db, Finding)
-                else:
-                    # Internal scan: adds product value, does not itself satisfy
-                    # the external ASV requirement (11.3.2), so TLS/web-app
-                    # checks are skipped here — same as the architecture doc.
-                    _run_openvas_scan(scan.id, asset_id, target, db, Finding)
-                    _run_nuclei_scan(scan.id, asset_id, target, db, Finding)
+            if scan.type == 'external':
+                _run_testssl_scan(scan.id, asset.id, target, open_ports, db, Finding)
+                _run_zap_scan(scan.id, asset.id, target, open_ports, db, Finding)
+                _run_nuclei_scan(scan.id, asset.id, target, db, Finding)
+                _run_openvas_scan(scan.id, asset.id, target, db, Finding)
+            else:
+                _run_openvas_scan(scan.id, asset.id, target, db, Finding)
+                _run_nuclei_scan(scan.id, asset.id, target, db, Finding)
 
-            scan.progress_percent = 100
-            scan.progress = 'Completed'
-            scan.status = 'completed'
+            job.status = 'completed'
+            job.completed_at = datetime.utcnow()
+            job.error_message = None
+            execution.status = 'success'
+            execution.completed_at = datetime.utcnow()
+
         except Exception as e:
             import traceback
             error_trace = traceback.format_exc()
-            print(f"Error executing scan {scan_id}:\n{error_trace}")
-            scan.status = 'failed'
-            scan.error_message = f"{str(e)}\n\nTraceback:\n{error_trace}"
-            scan.progress = 'Failed'
-        finally:
-            # Check findings
-            if scan.status == 'completed' and not scan.findings:
-                scan.progress = 'Completed successfully (0 vulnerabilities found)'
+            print(f"Error executing ScanJob {job.id} (attempt {job.attempt_number}):\n{error_trace}")
 
-            scan.end_time = datetime.utcnow()
+            execution.status = 'failed'
+            execution.error_message = f"{e}\n\n{error_trace}"
+            execution.completed_at = datetime.utcnow()
+            job.error_message = str(e)
+
+            if job.attempt_number >= job.max_attempts:
+                # §19: "Attempts >= Max -> Abort Job"
+                job.status = 'aborted'
+                job.completed_at = datetime.utcnow()
+            else:
+                # §19 exact backoff table: 2, 4, 8, 16, 30s. The scheduler
+                # (not Celery's own countdown) re-evaluates this job once
+                # next_retry_at passes -- see scheduler_tick's docstring.
+                backoff = RETRY_BACKOFF_SECONDS[min(job.attempt_number - 1, len(RETRY_BACKOFF_SECONDS) - 1)]
+                job.status = 'retry_scheduled'
+                job.next_retry_at = datetime.utcnow() + timedelta(seconds=backoff)
+
+        finally:
+            # Lock release always happens, success or failure, so the
+            # next attempt (or a different job entirely) can proceed.
+            # TTL expiry is only the crash-safety fallback (§15 Strategy
+            # 4) -- this is the primary release path.
+            lock_manager.release_lock(job.asset_id, lock_token)
+            _recompute_scan_status(scan, db)
             db.session.commit()
 
 
