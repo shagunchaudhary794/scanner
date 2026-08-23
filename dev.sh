@@ -8,10 +8,11 @@
 # Usage:
 #   ./dev.sh setup            # first time: create venv + install deps
 #   ./dev.sh up               # start infra containers (db, redis, openvas)
-#   ./dev.sh dev              # infra + worker (background) + Flask (foreground)
+#   ./dev.sh dev               # infra + worker (background) + beat (background) + Flask (foreground)
 #   ./dev.sh web              # run Flask with auto-reload (own terminal)
 #   ./dev.sh worker           # run Celery worker with auto-reload (own terminal)
-#   ./dev.sh logs             # follow infra + worker logs
+#   ./dev.sh beat             # run Celery Beat scheduler (own terminal) -- required for scans to actually dispatch
+#   ./dev.sh logs             # follow infra + worker + beat logs
 #   ./dev.sh test             # smoke test against the local stack
 #   ./dev.sh status           # show running infra containers
 #   ./dev.sh stop             # stop infra containers (keep data)
@@ -30,6 +31,8 @@ VENV_DIR="${ROOT_DIR}/venv"
 LOG_DIR="${ROOT_DIR}/logs"
 WORKER_LOG="${LOG_DIR}/worker.log"
 PID_FILE="${LOG_DIR}/worker.pid"
+BEAT_LOG="${LOG_DIR}/beat.log"
+BEAT_PID_FILE="${LOG_DIR}/beat.pid"
 
 # Infra connection settings (override via env if needed)
 # Note: default DB_PORT is 5433, not 5432, to avoid clashing with a
@@ -186,6 +189,16 @@ stop_worker() {
     fi
 }
 
+stop_beat() {
+    if [[ -f "${BEAT_PID_FILE}" ]]; then
+        local pid
+        pid="$(cat "${BEAT_PID_FILE}")"
+        warn "Stopping background beat scheduler (pid ${pid})"
+        kill "${pid}" 2>/dev/null || true
+        rm -f "${BEAT_PID_FILE}"
+    fi
+}
+
 cmd_setup() {
     create_venv
     local py; py="$(venv_python)"
@@ -221,6 +234,14 @@ cmd_worker() {
     exec "${py}" -m celery -A tasks.celery worker --loglevel=info ${CELERY_POOL}
 }
 
+cmd_beat() {
+    require_venv
+    local py; py="$(venv_python)"
+    ensure_infra
+    info "Starting Celery Beat scheduler (drives tasks.scheduler_tick / tasks.check_scan_schedules)"
+    exec "${py}" -m celery -A tasks.celery beat --loglevel=info
+}
+
 cmd_dev() {
     require_venv
     local py; py="$(venv_python)"
@@ -231,22 +252,35 @@ cmd_dev() {
     "${py}" -m celery -A tasks.celery worker --loglevel=info ${CELERY_POOL} >"${WORKER_LOG}" 2>&1 &
     local worker_pid=$!
     echo "${worker_pid}" > "${PID_FILE}"
-    trap 'warn "Stopping background worker"; kill "$(cat "${PID_FILE}")" 2>/dev/null || true; rm -f "${PID_FILE}";' EXIT
+    info "Starting Celery Beat in background (logs -> ${BEAT_LOG})"
+    "${py}" -m celery -A tasks.celery beat --loglevel=info >"${BEAT_LOG}" 2>&1 &
+    local beat_pid=$!
+    echo "${beat_pid}" > "${BEAT_PID_FILE}"
+    trap 'warn "Stopping background worker and beat"; kill "$(cat "${PID_FILE}" 2>/dev/null)" 2>/dev/null || true; kill "$(cat "${BEAT_PID_FILE}" 2>/dev/null)" 2>/dev/null || true; rm -f "${PID_FILE}" "${BEAT_PID_FILE}";' EXIT
     info "Starting Flask dev server on http://localhost:5000 (Ctrl+C to stop everything)"
     "${py}" -m flask run --debug
 }
 
 cmd_logs() {
     local tail_pid=""
+    local beat_tail_pid=""
     if [[ -f "${PID_FILE}" ]]; then
         info "Tailing worker log (${WORKER_LOG})"
         tail -f "${WORKER_LOG}" &
         tail_pid=$!
     fi
+    if [[ -f "${BEAT_PID_FILE}" ]]; then
+        info "Tailing beat log (${BEAT_LOG})"
+        tail -f "${BEAT_LOG}" &
+        beat_tail_pid=$!
+    fi
     info "Following infra logs (Ctrl+C to stop)"
     compose logs -f
     if [[ -n "${tail_pid}" ]]; then
         kill "${tail_pid}" 2>/dev/null || true
+    fi
+    if [[ -n "${beat_tail_pid}" ]]; then
+        kill "${beat_tail_pid}" 2>/dev/null || true
     fi
 }
 
@@ -318,18 +352,21 @@ cmd_status() {
 
 cmd_stop() {
     stop_worker
+    stop_beat
     compose stop
     ok "Stopped. Use './dev.sh up' to start again."
 }
 
 cmd_down() {
     stop_worker
+    stop_beat
     compose down
     ok "Containers removed. Data volumes preserved."
 }
 
 cmd_clean() {
     stop_worker
+    stop_beat
     compose down -v
     rm -rf "${VENV_DIR}" "${LOG_DIR}"
     ok "Cleaned containers, volumes, venv and logs."
@@ -345,10 +382,11 @@ Postgres, Redis and OpenVAS run in Docker.
 Commands:
   setup    create venv + install requirements (+ dev deps)
   up       start infra containers (db, redis, openvas)
-  dev      infra + background worker + Flask (foreground) with hot-reload
+  dev      infra + background worker + background beat + Flask (foreground) with hot-reload
   web      run Flask only (auto-reload)
   worker   run Celery worker only (auto-reload)
-  logs     follow infra and worker logs
+  beat     run Celery Beat scheduler only -- required for scans to actually dispatch
+  logs     follow infra, worker, and beat logs
   test     smoke test (app boots, DB reachable, Redis ping)
   status   show infra container state
   stop     stop infra containers (keep data)
@@ -365,6 +403,9 @@ Notes:
   - Flask serves on http://localhost:5000 (debugger + auto-reload).
   - OpenVAS GMP connects to localhost:9390 in dev (GVM_HOST env).
   - ZAP API connects to localhost:8090 in dev (ZAP_HOST/ZAP_PORT env).
+  - Celery Beat MUST be running (via 'dev' or 'beat') for ScanJobs to
+    ever leave 'pending' -- the worker only executes tasks it's told to
+    run, it does not decide when. See tasks.scheduler_tick.
   - Env overrides: DB_PORT, REDIS_PORT, DB_USER, DB_PASSWORD, DB_NAME, GMP_HOST, ZAP_HOST, ZAP_PORT
 EOF
 }
@@ -375,6 +416,7 @@ case "${1:-help}" in
     dev) cmd_dev ;;
     web) cmd_web ;;
     worker) cmd_worker ;;
+    beat) cmd_beat ;;
     logs) cmd_logs ;;
     test) cmd_test ;;
     status|ps) cmd_status ;;
