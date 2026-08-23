@@ -35,6 +35,28 @@ services:
       redis:
         condition: service_started
 
+  # Celery Beat: the scheduler process itself (tasks.scheduler_tick,
+  # tasks.check_scan_schedules). Without this running, ScanJobs are
+  # created in 'pending' state but NEVER dispatched -- the worker only
+  # executes tasks it's told to run, it doesn't decide when. This must be
+  # its own process, separate from `worker` above, per Celery's own
+  # architecture (one beat process, any number of workers).
+  beat:
+    build: .
+    command: celery -A tasks.celery beat --loglevel=info
+    environment:
+      - DATABASE_URL=postgresql://scanner:scanner@db:5432/scanner
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - PYTHONPATH=/app
+    volumes:
+      - ./:/app
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
   db:
     image: postgres:15-alpine
     environment:
