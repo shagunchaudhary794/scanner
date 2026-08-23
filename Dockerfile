@@ -28,6 +28,12 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Playwright's browser binary is separate from the pip package -- this
+# also pulls in the OS-level shared libraries Chromium needs (--with-deps),
+# since the base image is slim and won't have them otherwise. Used by
+# discovery.py for JS-redirect tracking and shallow crawling (§4.4).
+RUN python -m playwright install --with-deps chromium
+
 # Copy application code
 COPY . .
 
