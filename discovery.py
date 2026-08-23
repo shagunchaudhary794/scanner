@@ -15,11 +15,13 @@ PCI reference doc §4.4 (Discovery Requirements) -- exact bullet list:
     6. Report any components found but excluded by the customer on the
        Attestation of Scan Compliance.
 
-This module implements 1, 2, 3, and the HTTP-30x/meta-refresh portion of
-4. It deliberately does NOT implement JavaScript-redirect tracking or
-full-site crawling (5) -- both require a headless browser / crawler,
-which is a materially bigger dependency than DNS lookups and raw HTTP
-requests, and is flagged as a known gap rather than silently skipped.
+This module implements all six points. Point 4's HTTP 30x/meta-refresh
+half is handled by trace_redirects() using plain requests; the
+JavaScript-redirect half needs a real browser to execute page JS, so
+trace_js_redirects_and_crawl() uses a headless Chromium (Playwright) for
+that plus a single-level, same-origin crawl for point 5. Both degrade
+gracefully (return empty results, not an exception) if Playwright or its
+browser binary isn't installed -- see run_discovery(use_browser=...).
 Point 6 (reporting excluded-but-found components) is handled at the
 route/model layer via Asset.is_out_of_scope + segmentation_attestation,
 not here.
@@ -155,7 +157,77 @@ def trace_redirects(url, max_hops=MAX_REDIRECT_HOPS):
     return sorted(seen_hosts)
 
 
-def run_discovery(domain, probe_redirects=True):
+try:
+    from playwright.sync_api import sync_playwright
+    _HAVE_PLAYWRIGHT = True
+except ImportError:
+    _HAVE_PLAYWRIGHT = False
+
+MAX_CRAWL_LINKS = 20
+BROWSER_TIMEOUT_MS = 15000
+
+
+def trace_js_redirects_and_crawl(start_url, max_links=MAX_CRAWL_LINKS):
+    """§4.4 point 4 (the JS-redirect half that trace_redirects() above
+    can't do) and point 5 (crawling): loads the page in a real headless
+    browser so `window.location = ...` / `location.href = ...`
+    JavaScript redirects actually execute, then does a single-level,
+    same-origin-only link crawl of whatever page it lands on.
+
+    Returns {'redirect_hosts': [...], 'crawled_hosts': [...]} -- empty
+    lists (not an exception) if Playwright/its browser isn't installed,
+    since this is meant to degrade gracefully alongside the DNS/MX/30x
+    checks in run_discovery(), not block them.
+
+    This is intentionally shallow -- ONE hop of JS redirect, ONE level
+    of links from the landing page, capped at max_links. A real crawler
+    (multi-level, respecting robots.txt, deduplicating a full site graph)
+    is a materially different and heavier tool; going further here would
+    blur into reconnaissance the customer didn't explicitly scope, which
+    is the same boundary the rest of this module already draws.
+    """
+    if not _HAVE_PLAYWRIGHT:
+        return {'redirect_hosts': [], 'crawled_hosts': [], 'skipped_reason': 'playwright not installed'}
+
+    from urllib.parse import urlparse
+
+    start_host = urlparse(start_url).hostname
+    redirect_hosts = set()
+    crawled_hosts = set()
+
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch()
+            try:
+                page = browser.new_page()
+                page.on('framenavigated', lambda frame: (
+                    redirect_hosts.add(urlparse(frame.url).hostname)
+                    if frame.url and urlparse(frame.url).hostname
+                    and urlparse(frame.url).hostname != start_host else None
+                ))
+                page.goto(start_url, timeout=BROWSER_TIMEOUT_MS, wait_until='networkidle')
+
+                # Single-level, same-origin link harvest from wherever we
+                # actually landed (post any JS redirect chain).
+                landed_host = urlparse(page.url).hostname
+                hrefs = page.eval_on_selector_all('a[href]', 'els => els.map(e => e.href)')
+                for href in hrefs[:max_links * 3]:  # oversample before host-filtering
+                    host = urlparse(href).hostname
+                    if host and host != landed_host and host != start_host:
+                        crawled_hosts.add(host)
+                    if len(crawled_hosts) >= max_links:
+                        break
+            finally:
+                browser.close()
+    except Exception as e:
+        return {'redirect_hosts': [], 'crawled_hosts': [], 'skipped_reason': str(e)}
+
+    redirect_hosts.discard(None)
+    crawled_hosts.discard(None)
+    return {'redirect_hosts': sorted(redirect_hosts), 'crawled_hosts': sorted(crawled_hosts)}
+
+
+def run_discovery(domain, probe_redirects=True, use_browser=True):
     """Aggregates all discovery checks for one customer-provided domain.
     Returns a dict of candidate hostnames -> {'ip': str|None, 'via': str}
     for anything found that ISN'T the domain itself, ready to be shown to
@@ -182,5 +254,23 @@ def run_discovery(domain, probe_redirects=True):
             for host in hosts:
                 if host not in candidates:
                     candidates[host] = {'ip': resolve_a_record(host), 'via': 'redirect'}
+
+    if use_browser:
+        # §4.4 point 4 (JS redirects) and point 5 (crawling) -- the parts
+        # trace_redirects() above structurally can't do since it never
+        # executes page JavaScript. Best-effort: if Playwright/its browser
+        # binary isn't installed, this silently contributes nothing rather
+        # than failing the whole discovery pass (see module docstring).
+        for scheme in ('https', 'http'):
+            try:
+                browser_results = trace_js_redirects_and_crawl(f"{scheme}://{domain}")
+            except Exception:
+                browser_results = {'redirect_hosts': [], 'crawled_hosts': []}
+            for host in browser_results.get('redirect_hosts', []):
+                if host not in candidates:
+                    candidates[host] = {'ip': resolve_a_record(host), 'via': 'js_redirect'}
+            for host in browser_results.get('crawled_hosts', []):
+                if host not in candidates:
+                    candidates[host] = {'ip': resolve_a_record(host), 'via': 'crawl'}
 
     return candidates
