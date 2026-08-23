@@ -89,6 +89,78 @@ class AuditLog(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 
+class ScanJob(db.Model):
+    """One asset's pipeline within a Scan. Orchestration engine doc §15/§17:
+    a Scan decomposes into one ScanJob per asset, each progressing
+    independently through Pending -> Running -> Completed/Failed ->
+    Retry_Scheduled -> Aborted. The scheduler (tasks.py's scheduler_tick)
+    is the only thing that moves a job out of 'pending' or
+    'retry_scheduled' -- it does so by acquiring a Redis lock on the
+    asset (lock_manager.py) before dispatching, so two jobs can never
+    scan the same asset concurrently (§13 Distributed Lock Management).
+    """
+    id = db.Column(db.Integer, primary_key=True)
+    scan_id = db.Column(db.Integer, db.ForeignKey('scan.id'), nullable=False)
+    asset_id = db.Column(db.Integer, db.ForeignKey('asset.id'), nullable=False)
+    status = db.Column(db.String(50), default='pending')
+    # pending | running | completed | failed | retry_scheduled | aborted
+    attempt_number = db.Column(db.Integer, default=0)
+    max_attempts = db.Column(db.Integer, default=5)  # matches §19's 5-attempt retry table
+    assigned_agent_id = db.Column(db.Integer, db.ForeignKey('agent.id'), nullable=True)
+    celery_task_id = db.Column(db.String(255), nullable=True)
+    assigned_agent = db.relationship('Agent', foreign_keys=[assigned_agent_id])
+    asset = db.relationship('Asset', foreign_keys=[asset_id])
+    priority = db.Column(db.Integer, default=5)  # lower runs first; §36 "Critical Asset priority=1"
+    # Scheduler-owned: when a failed job becomes eligible for another
+    # dispatch attempt. NOT a Celery countdown -- see scheduler_tick's
+    # docstring for why lock contention and execution failure use the
+    # same requeue mechanism instead of self-rescheduling.
+    next_retry_at = db.Column(db.DateTime, nullable=True)
+    error_message = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    started_at = db.Column(db.DateTime, nullable=True)
+    completed_at = db.Column(db.DateTime, nullable=True)
+
+    executions = db.relationship('JobExecution', backref='scan_job', lazy=True,
+                                  order_by='JobExecution.attempt_number')
+
+
+class JobExecution(db.Model):
+    """Immutable per-attempt execution history (architecture doc §26.3:
+    'Instead of Job Failed -> Update job row, the system stores Job +
+    Execution Attempts'). ScanJob.status is the current state; this table
+    is the append-only audit trail of every attempt that led there.
+    """
+    id = db.Column(db.Integer, primary_key=True)
+    scan_job_id = db.Column(db.Integer, db.ForeignKey('scan_job.id'), nullable=False)
+    agent_id = db.Column(db.Integer, db.ForeignKey('agent.id'), nullable=True)
+    attempt_number = db.Column(db.Integer, nullable=False)
+    started_at = db.Column(db.DateTime, nullable=True)
+    completed_at = db.Column(db.DateTime, nullable=True)
+    status = db.Column(db.String(50), nullable=True)  # running | success | failed
+    error_message = db.Column(db.Text, nullable=True)
+
+
+class ScanSchedule(db.Model):
+    """PCI reference doc §10: 'External vulnerability scans must be
+    performed at least once every three months.' §50 of the architecture
+    doc: recurring scan schedules, checked periodically by
+    tasks.check_scan_schedules and turned into a real Scan (+ ScanJobs
+    for every currently in-scope asset) once due. Asset membership is
+    NOT frozen at schedule-creation time -- each run scans whichever
+    assets are in-scope for the organization *at that time*, since scope
+    legitimately changes between quarters.
+    """
+    id = db.Column(db.Integer, primary_key=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organization.id'), nullable=False)
+    scan_type = db.Column(db.String(50), nullable=False)  # 'internal' | 'external'
+    frequency = db.Column(db.String(50), nullable=False)  # 'weekly' | 'monthly' | 'quarterly'
+    next_run = db.Column(db.DateTime, nullable=False)
+    last_run = db.Column(db.DateTime, nullable=True)
+    enabled = db.Column(db.Boolean, default=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+
 class Asset(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     organization_id = db.Column(db.Integer, db.ForeignKey('organization.id'), nullable=False)
@@ -136,6 +208,7 @@ class Scan(db.Model):
     # Relationships
     scan_targets = db.relationship('ScanTarget', backref='scan', lazy=True)
     findings = db.relationship('Finding', backref='scan', lazy=True)
+    scan_jobs = db.relationship('ScanJob', backref='scan', lazy=True)
 
 class ScanTarget(db.Model):
     id = db.Column(db.Integer, primary_key=True)
