@@ -22,3 +22,9 @@ pymongo==4.7.2         # MongoDB no-auth check
 # reverse lookups and MX records (§4.4); forward A-record lookups use
 # stdlib socket only, so this is the one new dependency.
 dnspython==2.6.1
+
+# JS-redirect tracking and shallow crawling (§4.4 points 4-5). Requires a
+# browser binary install step beyond `pip install` -- see Dockerfile's
+# `playwright install chromium --with-deps` line. discovery.py degrades
+# gracefully (empty results, no exception) if the binary isn't present.
+playwright==1.47.0
