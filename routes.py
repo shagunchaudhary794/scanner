@@ -465,11 +465,12 @@ def new_scan():
 
         db.session.commit()
 
-        # Dispatch real background scan task via Celery
-        from tasks import execute_scan
-        task = execute_scan.delay(scan.id, scan_type, asset_ids)
-        scan.celery_task_id = task.id
-        db.session.commit()
+        # Decompose into one ScanJob per asset. The scheduler
+        # (tasks.scheduler_tick, run via Celery Beat) picks these up on
+        # its next tick once it can acquire that asset's lock and find an
+        # online agent -- nothing is dispatched directly from the request.
+        from tasks import create_scan_jobs
+        create_scan_jobs(scan.id, asset_ids)
 
         _log_audit('SCAN_CREATED', entity_type='Scan', entity_id=scan.id, details=scan_type)
         return redirect(url_for('main.scans'))
@@ -495,13 +496,30 @@ def cancel_scan(id):
         return redirect(url_for('main.scans'))
 
     if scan.status in ['queued', 'running']:
-        # Revoke celery task
-        if scan.celery_task_id:
-            from celery.app.control import Control
-            from tasks import celery
-            Control(celery).revoke(scan.celery_task_id, terminate=True, signal='SIGTERM')
+        from models import ScanJob
+        import lock_manager
+        from celery.app.control import Control
+        from tasks import celery
 
-        # Stop openvas task
+        cancelled_count = 0
+        for job in ScanJob.query.filter_by(scan_id=scan.id).all():
+            if job.status in ('pending', 'running', 'retry_scheduled'):
+                if job.celery_task_id:
+                    Control(celery).revoke(job.celery_task_id, terminate=True, signal='SIGTERM')
+
+                # A running job holds its asset's lock -- releasing it here
+                # requires the job's own token, which this route doesn't
+                # have (it's held in-process by execute_scan_job's local
+                # variable, not persisted). Safe either way: the lock's
+                # TTL (§15 Strategy 4) reclaims it on its own, and a
+                # cancelled/aborted job is never retried, so nothing waits
+                # on this specific release.
+                job.status = 'aborted'
+                job.error_message = 'Cancelled by user'
+                job.completed_at = datetime.utcnow()
+                cancelled_count += 1
+
+        # Stop any in-flight OpenVAS task too (best-effort, matches prior behavior).
         if scan.openvas_task_id:
             try:
                 from tasks import _get_gvm_connection
@@ -516,15 +534,63 @@ def cancel_scan(id):
                 print(f"Failed to stop OpenVAS task: {e}")
 
         scan.status = 'cancelled'
-        scan.progress = 'Scan cancelled by user.'
+        scan.progress = f'Scan cancelled by user ({cancelled_count} job(s) aborted).'
         scan.end_time = datetime.utcnow()
         db.session.commit()
-        _log_audit('SCAN_CANCELLED', entity_type='Scan', entity_id=scan.id)
+        _log_audit('SCAN_CANCELLED', entity_type='Scan', entity_id=scan.id, details=f'{cancelled_count} jobs aborted')
         flash('Scan cancelled successfully.', 'info')
     else:
         flash('Scan cannot be cancelled in its current state.', 'error')
 
     return redirect(url_for('main.scan_detail', id=scan.id))
+
+
+@bp.route('/settings/schedules', methods=['GET', 'POST'])
+@roles_required('admin')
+def scan_schedules():
+    """PCI reference doc §10: quarterly scan cadence. tasks.check_scan_schedules
+    (Celery Beat, hourly) turns a due ScanSchedule into a real Scan covering
+    every currently in-scope Asset for the org -- see that task's docstring
+    for why membership isn't frozen at schedule-creation time.
+    """
+    from models import ScanSchedule
+
+    if request.method == 'POST':
+        scan_type = request.form.get('scan_type')
+        frequency = request.form.get('frequency')
+        if scan_type not in ('internal', 'external') or frequency not in ('weekly', 'monthly', 'quarterly'):
+            flash('Invalid schedule parameters.', 'error')
+            return redirect(url_for('main.scan_schedules'))
+
+        delta = {'weekly': timedelta(weeks=1), 'monthly': timedelta(days=30), 'quarterly': timedelta(days=90)}[frequency]
+        schedule = ScanSchedule(
+            organization_id=current_user.organization_id,
+            scan_type=scan_type, frequency=frequency,
+            next_run=datetime.utcnow() + delta, enabled=True,
+        )
+        db.session.add(schedule)
+        db.session.commit()
+        _log_audit('SCAN_SCHEDULE_CREATED', entity_type='ScanSchedule', entity_id=schedule.id, details=frequency)
+        flash(f'{frequency.capitalize()} {scan_type} scan schedule created.', 'success')
+        return redirect(url_for('main.scan_schedules'))
+
+    schedules = ScanSchedule.query.filter_by(organization_id=current_user.organization_id).order_by(ScanSchedule.created_at.desc()).all()
+    return render_template('scan_schedules.html', schedules=schedules)
+
+
+@bp.route('/settings/schedules/<int:id>/toggle', methods=['POST'])
+@roles_required('admin')
+def toggle_schedule(id):
+    from models import ScanSchedule
+    schedule = ScanSchedule.query.get_or_404(id)
+    if schedule.organization_id != current_user.organization_id:
+        flash('You do not have access to that schedule.', 'error')
+        return redirect(url_for('main.scan_schedules'))
+    schedule.enabled = not schedule.enabled
+    db.session.commit()
+    _log_audit('SCAN_SCHEDULE_TOGGLED', entity_type='ScanSchedule', entity_id=schedule.id,
+               details='enabled' if schedule.enabled else 'disabled')
+    return redirect(url_for('main.scan_schedules'))
 
 
 # ---------------------------------------------------------------------------
