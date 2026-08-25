@@ -47,6 +47,7 @@
 
             {% if d.decision == 'pending' %}
             <form method="POST" action="{{ url_for('main.decide_dispute', id=d.id) }}" class="flex items-end gap-3 pt-3 border-t border-white/40 mt-3">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <div class="flex-1">
                     <label class="block text-xs uppercase text-slate-500 mb-1">Analyst Notes</label>
                     <input type="text" name="decision_notes" placeholder="Rationale for the report's Exceptions column" class="w-full glacier-recessed-sm p-2 text-sm bg-transparent">
