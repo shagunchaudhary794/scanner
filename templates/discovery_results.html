@@ -17,6 +17,7 @@
     <a href="{{ url_for('main.asset_detail', id=asset.id) }}" class="inline-block mt-4 text-xs text-glacier-blue underline">Back to {{ asset.hostname }}</a>
     {% else %}
     <form method="POST" action="{{ url_for('main.confirm_discovery', id=asset.id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <table class="w-full text-left text-sm border-separate border-spacing-y-2 mb-6">
             <thead class="text-xs text-slate-500 uppercase">
                 <tr>
