@@ -30,6 +30,7 @@
         {% endif %}
 
         <form method="POST" action="{{ url_for('main.update_scope', id=asset.id) }}" class="mt-5 pt-5 border-t border-white/40">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             {% if asset.is_out_of_scope %}
             <input type="hidden" name="action" value="include">
             <button type="submit" class="px-4 py-2 rounded-xl bg-emerald-500/10 text-emerald-600 text-xs font-bold uppercase hover:bg-emerald-500/20">
@@ -57,12 +58,73 @@
         </p>
         {% if asset.hostname %}
         <form method="POST" action="{{ url_for('main.discover_assets', id=asset.id) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button type="submit" class="w-full py-2.5 glacier-btn rounded-xl text-sm font-medium text-slate-700">
                 Run Discovery
             </button>
         </form>
         {% else %}
         <p class="text-xs text-slate-400">This asset has no hostname on record — discovery needs a domain, not just an IP.</p>
+        {% endif %}
+    </section>
+
+    <section class="glacier-card p-6 lg:col-span-3">
+        <div class="flex items-center justify-between mb-2">
+            <h3 class="text-sm font-semibold text-slate-800 tracking-wider uppercase">Shared / Multi-Tenant Hosting (§5.7)</h3>
+            {% if asset.is_shared_hosting %}
+            <span class="px-3 py-1 rounded-full bg-glacier-blue/10 text-glacier-blue text-xs font-bold uppercase">Shared Hosting</span>
+            {% endif %}
+        </div>
+        <p class="text-xs text-slate-500 mb-4">
+            PCI reference doc §5.7/§14: in a shared hosting environment, weaknesses
+            in another tenant's setup could compromise this asset. Only two
+            resolutions are valid — the provider supplies its own independent
+            passing ASV evidence, or the provider's infrastructure is included in
+            this scan.
+        </p>
+
+        {% if asset.is_shared_hosting %}
+        <dl class="grid grid-cols-2 gap-4 text-sm mb-3">
+            <div><dt class="text-slate-500 text-xs uppercase">Provider</dt><dd>{{ asset.hosting_provider_name or '—' }}</dd></div>
+            {% if asset.hosting_evidence_file_path %}
+            <div><dt class="text-slate-500 text-xs uppercase">Evidence File</dt>
+                <dd><a href="{{ url_for('main.download_evidence', filename=asset.hosting_evidence_file_path) }}" class="text-glacier-blue underline">Download</a></dd>
+            </div>
+            {% endif %}
+        </dl>
+        {% if asset.hosting_evidence_note %}
+        <div class="glacier-recessed-sm p-3 text-xs text-slate-600 mb-4">
+            <span class="uppercase font-semibold text-slate-500">Evidence Note:</span> {{ asset.hosting_evidence_note }}
+        </div>
+        {% endif %}
+        <form method="POST" action="{{ url_for('main.update_hosting', id=asset.id) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="action" value="unmark_shared">
+            <button type="submit" class="px-4 py-2 rounded-xl bg-slate-400/10 text-slate-600 text-xs font-bold uppercase hover:bg-slate-400/20">
+                Unmark Shared Hosting
+            </button>
+        </form>
+        {% else %}
+        <form method="POST" action="{{ url_for('main.update_hosting', id=asset.id) }}" enctype="multipart/form-data" class="space-y-3">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="action" value="mark_shared">
+            <div>
+                <label class="block text-xs uppercase text-slate-500 mb-1">Hosting Provider Name</label>
+                <input type="text" name="hosting_provider_name" placeholder="e.g. Acme Cloud Hosting" class="w-full glacier-recessed-sm p-2 text-sm bg-transparent">
+            </div>
+            <div>
+                <label class="block text-xs uppercase text-slate-500 mb-1">Evidence Note (required if no file)</label>
+                <textarea name="hosting_evidence_note" rows="2" placeholder="Describe the provider's own independent ASV passing scan, or note that their infrastructure is included in this scan."
+                    class="w-full glacier-recessed-sm p-2 text-sm bg-transparent"></textarea>
+            </div>
+            <div>
+                <label class="block text-xs uppercase text-slate-500 mb-1">Evidence File (required if no note)</label>
+                <input type="file" name="hosting_evidence_file" class="w-full text-xs">
+            </div>
+            <button type="submit" class="px-4 py-2 rounded-xl bg-glacier-blue/10 text-glacier-blue text-xs font-bold uppercase hover:bg-glacier-blue/20">
+                Mark as Shared Hosting
+            </button>
+        </form>
         {% endif %}
     </section>
 
