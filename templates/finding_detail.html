@@ -54,6 +54,7 @@
             the report, only its compliance outcome changes on approval.
         </p>
         <form method="POST" action="{{ url_for('main.submit_dispute', id=finding.id) }}" enctype="multipart/form-data" class="space-y-4">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <div>
                 <label class="block text-xs uppercase text-slate-500 mb-1">Dispute Type</label>
                 <select name="dispute_type" required class="w-full glacier-recessed-sm p-2 text-sm bg-transparent">
