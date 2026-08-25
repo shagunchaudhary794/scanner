@@ -6,6 +6,7 @@
     <div class="flex gap-2">
         {% if scan.status in ['queued', 'running'] %}
         <form action="{{ url_for('main.cancel_scan', id=scan.id) }}" method="POST" class="inline">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button type="submit" class="px-4 py-2 bg-error/10 hover:bg-error/20 text-error border border-error/30 rounded-md text-sm font-medium transition-colors">
                 Stop Scan
             </button>
@@ -13,6 +14,7 @@
         {% endif %}
         {% if scan.status == 'completed' and scan.findings|length > 0 %}
         <form action="{{ url_for('main.generate_report') }}" method="POST" class="inline">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="scan_id" value="{{ scan.id }}">
             <input type="hidden" name="format" value="csv">
             <button type="submit" class="px-4 py-2 bg-primary/10 hover:bg-primary/20 text-primary border border-primary/30 rounded-md text-sm font-medium transition-colors">
@@ -94,6 +96,58 @@
         </ul>
     </section>
 </div>
+
+<section class="bg-surface-container border border-outline-variant flex flex-col overflow-hidden mt-6">
+    <div class="px-4 py-3 border-b border-outline-variant flex justify-between items-center bg-surface-container-low">
+        <h2 class="font-label-caps text-label-caps text-on-surface uppercase tracking-wider">
+            Asset Job Status
+        </h2>
+    </div>
+    <div class="overflow-x-auto">
+        <table class="w-full text-left border-collapse">
+            <thead class="bg-surface-container-high border-b border-outline-variant">
+                <tr>
+                    <th class="px-table-cell-padding-x py-table-cell-padding-y font-label-caps text-label-caps text-on-surface-variant uppercase font-medium">Asset</th>
+                    <th class="px-table-cell-padding-x py-table-cell-padding-y font-label-caps text-label-caps text-on-surface-variant uppercase font-medium">Status</th>
+                    <th class="px-table-cell-padding-x py-table-cell-padding-y font-label-caps text-label-caps text-on-surface-variant uppercase font-medium">Attempt</th>
+                    <th class="px-table-cell-padding-x py-table-cell-padding-y font-label-caps text-label-caps text-on-surface-variant uppercase font-medium">Agent</th>
+                    <th class="px-table-cell-padding-x py-table-cell-padding-y font-label-caps text-label-caps text-on-surface-variant uppercase font-medium">Next Retry</th>
+                    <th class="px-table-cell-padding-x py-table-cell-padding-y font-label-caps text-label-caps text-on-surface-variant uppercase font-medium">Error</th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-outline-variant/50">
+                {% for job in scan.scan_jobs|default([]) %}
+                <tr>
+                    <td class="px-table-cell-padding-x py-table-cell-padding-y font-code-sm text-code-sm text-on-surface">
+                        {{ job.asset.hostname or job.asset.ip_address }}
+                    </td>
+                    <td class="px-table-cell-padding-x py-table-cell-padding-y">
+                        {% if job.status == 'completed' %}
+                        <span class="px-2 py-0.5 rounded bg-green-500/10 text-green-600 text-[10px] font-bold uppercase">Completed</span>
+                        {% elif job.status == 'running' %}
+                        <span class="px-2 py-0.5 rounded bg-primary/10 text-primary text-[10px] font-bold uppercase">Running</span>
+                        {% elif job.status == 'retry_scheduled' %}
+                        <span class="px-2 py-0.5 rounded bg-yellow-500/10 text-yellow-600 text-[10px] font-bold uppercase">Retry Scheduled</span>
+                        {% elif job.status == 'aborted' %}
+                        <span class="px-2 py-0.5 rounded bg-error/10 text-error text-[10px] font-bold uppercase">Aborted</span>
+                        {% elif job.status == 'failed' %}
+                        <span class="px-2 py-0.5 rounded bg-error/10 text-error text-[10px] font-bold uppercase">Failed</span>
+                        {% else %}
+                        <span class="px-2 py-0.5 rounded bg-outline-variant/20 text-on-surface-variant text-[10px] font-bold uppercase">Pending</span>
+                        {% endif %}
+                    </td>
+                    <td class="px-table-cell-padding-x py-table-cell-padding-y font-code-sm text-code-sm text-on-surface-variant">{{ job.attempt_number }} / {{ job.max_attempts }}</td>
+                    <td class="px-table-cell-padding-x py-table-cell-padding-y font-code-sm text-code-sm text-on-surface-variant">{{ job.assigned_agent.name if job.assigned_agent else '—' }}</td>
+                    <td class="px-table-cell-padding-x py-table-cell-padding-y font-code-sm text-code-sm text-on-surface-variant">{{ job.next_retry_at.strftime('%H:%M:%S') if job.next_retry_at else '—' }}</td>
+                    <td class="px-table-cell-padding-x py-table-cell-padding-y text-body-sm font-body-sm text-error truncate max-w-[300px]" title="{{ job.error_message or '' }}">{{ job.error_message or '' }}</td>
+                </tr>
+                {% else %}
+                <tr><td colspan="6" class="px-table-cell-padding-x py-table-cell-padding-y text-on-surface-variant text-center">No asset jobs recorded.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
 
 <section class="bg-surface-container border border-outline-variant flex flex-col overflow-hidden mt-6">
     <div class="px-4 py-3 border-b border-outline-variant flex justify-between items-center bg-surface-container-low">
