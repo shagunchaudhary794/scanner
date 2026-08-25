@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block title %}Scan Schedules - Vigilance SOC{% endblock %}
+{% block header_title %}Recurring Scan Schedules{% endblock %}
+
+{% block content %}
+<p class="text-xs text-slate-500 mb-6 max-w-2xl">
+    PCI DSS Requirement 11.3.2 requires external scans at least once every
+    three months. A schedule automatically creates a new scan against every
+    currently in-scope asset when it comes due — asset scope isn't frozen
+    at creation time, so scope changes between runs are always picked up.
+</p>
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+    <section class="glacier-card p-6 lg:col-span-2">
+        <h3 class="text-sm font-semibold text-slate-800 tracking-wider uppercase mb-4">Active Schedules</h3>
+        <table class="w-full text-left text-sm border-separate border-spacing-y-2">
+            <thead class="text-xs text-slate-500 uppercase">
+                <tr><th class="pb-2 px-2">Type</th><th class="pb-2 px-2">Frequency</th><th class="pb-2 px-2">Next Run</th><th class="pb-2 px-2">Last Run</th><th class="pb-2 px-2">Status</th><th class="pb-2 px-2"></th></tr>
+            </thead>
+            <tbody>
+                {% for s in schedules %}
+                <tr class="glacier-recessed-sm">
+                    <td class="py-2 px-2 capitalize">{{ s.scan_type }}</td>
+                    <td class="py-2 px-2 capitalize">{{ s.frequency }}</td>
+                    <td class="py-2 px-2 font-mono text-xs">{{ s.next_run.strftime('%Y-%m-%d') if s.next_run else '—' }}</td>
+                    <td class="py-2 px-2 font-mono text-xs text-slate-400">{{ s.last_run.strftime('%Y-%m-%d') if s.last_run else 'Never' }}</td>
+                    <td class="py-2 px-2 text-xs">
+                        {% if s.enabled %}<span class="text-emerald-600 font-bold uppercase">Enabled</span>
+                        {% else %}<span class="text-slate-400 font-bold uppercase">Disabled</span>{% endif %}
+                    </td>
+                    <td class="py-2 px-2">
+                        <form method="POST" action="{{ url_for('main.toggle_schedule', id=s.id) }}">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <button type="submit" class="text-xs text-glacier-blue underline">
+                                {{ 'Disable' if s.enabled else 'Enable' }}
+                            </button>
+                        </form>
+                    </td>
+                </tr>
+                {% else %}
+                <tr><td colspan="6" class="py-4 px-2 text-slate-500 text-center">No recurring schedules configured.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </section>
+
+    <section class="glacier-card p-6">
+        <h3 class="text-sm font-semibold text-slate-800 tracking-wider uppercase mb-4">New Schedule</h3>
+        <form method="POST" class="space-y-3">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <div>
+                <label class="block text-xs uppercase text-slate-500 mb-1">Scan Type</label>
+                <select name="scan_type" class="w-full glacier-recessed-sm p-2 text-sm bg-transparent">
+                    <option value="external">External (PCI 11.3.2)</option>
+                    <option value="internal">Internal</option>
+                </select>
+            </div>
+            <div>
+                <label class="block text-xs uppercase text-slate-500 mb-1">Frequency</label>
+                <select name="frequency" class="w-full glacier-recessed-sm p-2 text-sm bg-transparent">
+                    <option value="quarterly" selected>Quarterly (PCI minimum)</option>
+                    <option value="monthly">Monthly</option>
+                    <option value="weekly">Weekly</option>
+                </select>
+            </div>
+            <button type="submit" class="w-full py-2.5 glacier-btn rounded-xl text-sm font-medium text-slate-700">
+                Create Schedule
+            </button>
+        </form>
+    </section>
+</div>
+{% endblock %}
