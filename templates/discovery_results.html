@@ -1,68 +1,54 @@
 {% extends "base.html" %}
-{% block title %}Disputes - Vigilance SOC{% endblock %}
-{% block header_title %}Dispute Review Queue{% endblock %}
+{% block title %}Discovery Results - Vigilance SOC{% endblock %}
+{% block header_title %}Discovery Results for {{ asset.hostname }}{% endblock %}
 
 {% block content %}
-<section class="glacier-card flex flex-col overflow-hidden h-[calc(100vh-140px)] min-h-[500px]">
-    <div class="p-6 border-b border-white/40 flex justify-between items-center bg-white/20">
-        <h3 class="text-sm font-semibold text-slate-800 tracking-wider uppercase">
-            ASV Analyst Review — {{ status_filter|capitalize }}
-        </h3>
-        <div class="flex gap-2 text-xs">
-            <a href="{{ url_for('main.disputes', status='pending') }}" class="px-3 py-1.5 rounded-lg {{ 'glacier-nav-active text-glacier-blue font-medium' if status_filter=='pending' else 'hover:bg-white/40 text-slate-600' }}">Pending</a>
-            <a href="{{ url_for('main.disputes', status='approved') }}" class="px-3 py-1.5 rounded-lg {{ 'glacier-nav-active text-glacier-blue font-medium' if status_filter=='approved' else 'hover:bg-white/40 text-slate-600' }}">Approved</a>
-            <a href="{{ url_for('main.disputes', status='rejected') }}" class="px-3 py-1.5 rounded-lg {{ 'glacier-nav-active text-glacier-blue font-medium' if status_filter=='rejected' else 'hover:bg-white/40 text-slate-600' }}">Rejected</a>
-            <a href="{{ url_for('main.disputes', status='all') }}" class="px-3 py-1.5 rounded-lg {{ 'glacier-nav-active text-glacier-blue font-medium' if status_filter not in ['pending','approved','rejected'] else 'hover:bg-white/40 text-slate-600' }}">All</a>
+<section class="glacier-card p-6">
+    <p class="text-xs text-slate-500 mb-6">
+        PCI reference doc, Phase 1 Scoping: "If the ASV finds hidden components
+        not listed by the customer, they must consult the customer." Nothing
+        below has been added to scope yet — select the components that
+        genuinely belong to this customer's Internet-facing environment and
+        confirm.
+    </p>
+
+    {% if not candidates %}
+    <p class="text-sm text-slate-500">No additional components were discovered beyond what's already tracked.</p>
+    <a href="{{ url_for('main.asset_detail', id=asset.id) }}" class="inline-block mt-4 text-xs text-glacier-blue underline">Back to {{ asset.hostname }}</a>
+    {% else %}
+    <form method="POST" action="{{ url_for('main.confirm_discovery', id=asset.id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <table class="w-full text-left text-sm border-separate border-spacing-y-2 mb-6">
+            <thead class="text-xs text-slate-500 uppercase">
+                <tr>
+                    <th class="pb-2 px-2 w-8"></th>
+                    <th class="pb-2 px-2">Host</th>
+                    <th class="pb-2 px-2">IP</th>
+                    <th class="pb-2 px-2">Discovery Method</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for host, info in candidates.items() %}
+                <tr class="glacier-recessed-sm">
+                    <td class="py-2 px-2">
+                        <input type="checkbox" name="confirm" value="{{ host }}|{{ info.ip or '' }}|{{ info.via }}" checked>
+                    </td>
+                    <td class="py-2 px-2 font-mono text-xs">{{ host }}</td>
+                    <td class="py-2 px-2 font-mono text-xs text-slate-500">{{ info.ip or 'unresolved' }}</td>
+                    <td class="py-2 px-2 text-xs uppercase text-slate-500">{{ info.via.replace('_', ' ') }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        <div class="flex gap-3">
+            <button type="submit" class="px-5 py-2.5 glacier-btn rounded-xl text-sm font-medium text-slate-700">
+                Add Selected to Scope
+            </button>
+            <a href="{{ url_for('main.asset_detail', id=asset.id) }}" class="px-5 py-2.5 rounded-xl text-sm font-medium text-slate-500 hover:bg-white/40">
+                Cancel
+            </a>
         </div>
-    </div>
-
-    <div class="flex-1 overflow-auto p-6 space-y-4">
-        {% if not disputes %}
-        <p class="text-sm text-slate-500 text-center py-12">No disputes in this queue.</p>
-        {% endif %}
-
-        {% for d in disputes %}
-        <div class="glacier-recessed-sm p-5">
-            <div class="flex items-start justify-between gap-4 mb-3">
-                <div>
-                    <div class="flex items-center gap-2 mb-1">
-                        <span class="text-xs font-bold uppercase text-slate-700">
-                            {{ 'False Positive' if d.dispute_type == 'false_positive' else 'Compensating Control' }}
-                        </span>
-                        <a href="{{ url_for('main.finding_detail', id=d.finding_id) }}" class="text-xs text-glacier-blue underline font-mono">Finding #{{ d.finding_id }}</a>
-                        {% if d.finding %}
-                        <span class="text-xs text-slate-400 font-mono">{{ d.finding.cve or d.finding.source_tool }} · CVSS {{ '%.1f'|format(d.finding.cvss_score) if d.finding.cvss_score is not none else 'n/a' }}</span>
-                        {% endif %}
-                    </div>
-                    <p class="text-sm text-slate-700">{{ d.evidence_text }}</p>
-                    {% if d.evidence_file_path %}
-                    <a href="{{ url_for('main.download_evidence', filename=d.evidence_file_path) }}" class="text-xs text-glacier-blue underline">Download evidence file</a>
-                    {% endif %}
-                </div>
-                <div class="text-right text-xs text-slate-400 whitespace-nowrap">
-                    <div>Submitted {{ d.created_at.strftime('%Y-%m-%d') if d.created_at else '' }}</div>
-                    {% if d.submitted_by %}<div>by {{ d.submitted_by }}</div>{% endif %}
-                </div>
-            </div>
-
-            {% if d.decision == 'pending' %}
-            <form method="POST" action="{{ url_for('main.decide_dispute', id=d.id) }}" class="flex items-end gap-3 pt-3 border-t border-white/40 mt-3">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                <div class="flex-1">
-                    <label class="block text-xs uppercase text-slate-500 mb-1">Analyst Notes</label>
-                    <input type="text" name="decision_notes" placeholder="Rationale for the report's Exceptions column" class="w-full glacier-recessed-sm p-2 text-sm bg-transparent">
-                </div>
-                <button type="submit" name="decision" value="approved" class="px-4 py-2 rounded-xl bg-emerald-500/10 text-emerald-600 text-xs font-bold uppercase hover:bg-emerald-500/20">Approve</button>
-                <button type="submit" name="decision" value="rejected" class="px-4 py-2 rounded-xl bg-glacier-red/10 text-glacier-red text-xs font-bold uppercase hover:bg-glacier-red/20">Reject</button>
-            </form>
-            {% else %}
-            <div class="pt-3 border-t border-white/40 mt-3 flex items-center justify-between text-xs">
-                <span class="{{ 'text-emerald-600' if d.decision == 'approved' else 'text-glacier-red' }} font-bold uppercase">{{ d.decision }}</span>
-                <span class="text-slate-400">{{ d.decision_notes }} {% if d.reviewed_by %}— {{ d.reviewed_by }}{% endif %}</span>
-            </div>
-            {% endif %}
-        </div>
-        {% endfor %}
-    </div>
+    </form>
+    {% endif %}
 </section>
 {% endblock %}
