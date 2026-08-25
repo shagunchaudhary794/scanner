@@ -27,6 +27,7 @@
     <section class="glacier-card p-6">
         <h3 class="text-sm font-semibold text-slate-800 tracking-wider uppercase mb-4">Onboard New Customer</h3>
         <form method="POST" class="space-y-3">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <div>
                 <label class="block text-xs uppercase text-slate-500 mb-1">Company Name</label>
                 <input type="text" name="name" required class="w-full glacier-recessed-sm p-2 text-sm bg-transparent">
