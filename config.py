@@ -14,6 +14,20 @@ class Config:
     CELERY_RESULT_BACKEND = os.environ.get('CELERY_RESULT_BACKEND', 'redis://redis:6379/0')
     SQLALCHEMY_TRACK_MODIFICATIONS = False
 
+    # Session cookie hardening. SESSION_COOKIE_SECURE defaults to False
+    # because local/dev deployments typically run over plain HTTP behind
+    # no TLS terminator yet -- setting it True there means the session
+    # cookie is silently never sent and login appears to "not work."
+    # Set FORCE_SECURE_COOKIES=1 once real TLS is in front of this app.
+    SESSION_COOKIE_HTTPONLY = True
+    SESSION_COOKIE_SAMESITE = 'Lax'
+    SESSION_COOKIE_SECURE = os.environ.get('FORCE_SECURE_COOKIES', '0') == '1'
+    PERMANENT_SESSION_LIFETIME = 60 * 60 * 8  # 8 hours
+
+    # CSRF tokens (Flask-WTF) inherit SECRET_KEY automatically; no
+    # separate WTF_CSRF_SECRET_KEY needed unless it should differ from
+    # the session-signing key.
+
     # Dispute evidence storage (PCI reference doc §8: customer must supply
     # written, system-generated evidence -- screen captures, config files,
     # patch lists, etc. -- for false-positive/compensating-control claims).
