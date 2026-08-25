@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from app import db
 from flask_login import UserMixin
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -48,6 +48,29 @@ class User(UserMixin, db.Model):
     is_active_user = db.Column(db.Boolean, default=True)  # 'is_active' name is reserved by UserMixin
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     last_login_at = db.Column(db.DateTime, nullable=True)
+    # Login rate-limiting: no lockout protection existed on the
+    # platform's OWN auth at all, which is a notable gap for a security
+    # scanning product whose PCI checklist (§6.1) requires ITS scans to
+    # detect exactly this kind of weakness in customer systems.
+    failed_login_attempts = db.Column(db.Integer, default=0)
+    locked_until = db.Column(db.DateTime, nullable=True)
+
+    LOCKOUT_THRESHOLD = 5
+    LOCKOUT_DURATION_MINUTES = 15
+
+    @property
+    def is_locked_out(self):
+        return self.locked_until is not None and self.locked_until > datetime.utcnow()
+
+    def register_failed_login(self):
+        self.failed_login_attempts = (self.failed_login_attempts or 0) + 1
+        if self.failed_login_attempts >= self.LOCKOUT_THRESHOLD:
+            self.locked_until = datetime.utcnow() + timedelta(minutes=self.LOCKOUT_DURATION_MINUTES)
+
+    def register_successful_login(self):
+        self.failed_login_attempts = 0
+        self.locked_until = None
+        self.last_login_at = datetime.utcnow()
 
     def set_password(self, password):
         self.password_hash = generate_password_hash(password)
@@ -117,6 +140,14 @@ class ScanJob(db.Model):
     # same requeue mechanism instead of self-rescheduling.
     next_retry_at = db.Column(db.DateTime, nullable=True)
     error_message = db.Column(db.Text, nullable=True)
+    # PCI §6.8/§7/§14: an active protection system (WAF/IPS) blocking or
+    # filtering the scan produces an "inconclusive scan," which must be
+    # recorded as an automatic failure with the interference described --
+    # NOT retried, since re-running Nmap against the same firewall won't
+    # produce a different result. Set by _run_nmap_scan's filtered-port-
+    # ratio heuristic; read by _recompute_scan_status for the Partial
+    # label and surfaced via the auto-fail Finding it also creates.
+    is_inconclusive = db.Column(db.Boolean, default=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     started_at = db.Column(db.DateTime, nullable=True)
     completed_at = db.Column(db.DateTime, nullable=True)
@@ -186,6 +217,19 @@ class Asset(db.Model):
     # attestation is treated as an invalid exclusion at the route layer.
     is_out_of_scope = db.Column(db.Boolean, default=False)
     segmentation_attestation = db.Column(db.Text, nullable=True)
+
+    # §5.7/§14: "In a shared hosting or multi-tenant environment, the
+    # customer could be compromised by weaknesses in another tenant's
+    # setup." Only two valid resolutions: the provider supplies its own
+    # independent passing ASV evidence, or the provider's infrastructure
+    # is included in this scan. Mirrors the segmentation_attestation
+    # pattern above -- a bare checkbox claiming "shared hosting, handled"
+    # proves nothing, so evidence (file and/or written note) is required,
+    # enforced the same way the empty-attestation exclusion is refused.
+    is_shared_hosting = db.Column(db.Boolean, default=False)
+    hosting_provider_name = db.Column(db.String(255), nullable=True)
+    hosting_evidence_note = db.Column(db.Text, nullable=True)
+    hosting_evidence_file_path = db.Column(db.String(255), nullable=True)
 
     # Relationships
     scan_targets = db.relationship('ScanTarget', backref='asset', lazy=True)
