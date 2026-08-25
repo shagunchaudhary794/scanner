@@ -70,6 +70,7 @@
                     <td class="py-4 px-4 text-right rounded-r-xl">
                         {% if scan.status in ['queued', 'running'] %}
                         <form action="{{ url_for('main.cancel_scan', id=scan.id) }}" method="POST" class="inline" onclick="event.stopPropagation();">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                             <button type="submit" class="text-xs px-2 py-1 bg-error/10 text-error hover:bg-error/20 rounded border border-error/30 transition-colors">
                                 Stop
                             </button>
