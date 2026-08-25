@@ -31,8 +31,16 @@ celery = Celery(
 celery.conf.beat_schedule = {
     'scheduler-tick': {'task': 'tasks.scheduler_tick', 'schedule': 5.0},
     'check-scan-schedules': {'task': 'tasks.check_scan_schedules', 'schedule': 3600.0},
+    'check-agent-heartbeats': {'task': 'tasks.check_agent_heartbeats', 'schedule': 30.0},
 }
 celery.conf.timezone = 'UTC'
+
+# Orchestration doc §22: "If heartbeat timeout exceeds 90 seconds, Agent
+# status becomes offline. Scheduler immediately stops assigning new jobs."
+# Nothing previously enforced this -- an agent whose process crashed
+# without a clean shutdown would sit 'online' forever, and scheduler_tick
+# would keep trying to hand it work indefinitely.
+AGENT_HEARTBEAT_TIMEOUT_SECONDS = 90
 
 # §19 Retry Strategy exact table: 2, 4, 8, 16, 30s (capped).
 RETRY_BACKOFF_SECONDS = [2, 4, 8, 16, 30]
@@ -50,6 +58,12 @@ DB_PORTS = {3306, 5432, 1433, 27017, 6379, 1521}
 # PCI DSS §6.4: remote administration services visible to the Internet require
 # a Special Note (Telnet specifically transmits credentials in cleartext).
 REMOTE_ADMIN_SERVICES = {'ssh', 'telnet', 'rdp', 'vnc', 'ms-wbt-server', 'pcanywhere'}
+
+# PCI §6.8/§7: proportion of scanned ports returning 'filtered' (vs a
+# definitive open/closed state) above which a scan is treated as
+# inconclusive -- i.e. an active protection system is silently dropping
+# probes rather than actually being an unprotected, mostly-closed host.
+FILTERED_RATIO_INCONCLUSIVE_THRESHOLD = 0.90
 
 
 def _make_finding(db, Finding, scan_id, asset_id, severity, cve, description,
@@ -109,18 +123,46 @@ def _recompute_scan_status(scan, db):
         scan.progress = f"{done}/{len(jobs)} asset jobs finished"
     else:
         aborted = [j for j in jobs if j.status == 'aborted']
+        inconclusive = [j for j in jobs if j.is_inconclusive]
         scan.status = 'completed'
         scan.progress_percent = 100
+        notes = []
         if aborted:
             asset_ids = ', '.join(str(j.asset_id) for j in aborted)
-            scan.error_message = (
-                f"{len(aborted)} of {len(jobs)} asset job(s) exhausted all retry "
-                f"attempts and were aborted (asset IDs: {asset_ids}). Scan is Partial."
-            )
-            scan.progress = f"Completed with {len(aborted)} aborted job(s)"
+            notes.append(f"{len(aborted)} of {len(jobs)} asset job(s) exhausted all retry "
+                         f"attempts and were aborted (asset IDs: {asset_ids})")
+        if inconclusive:
+            asset_ids = ', '.join(str(j.asset_id) for j in inconclusive)
+            notes.append(f"{len(inconclusive)} asset job(s) returned an inconclusive scan due to "
+                         f"active protection system interference (asset IDs: {asset_ids})")
+        if notes:
+            scan.error_message = '; '.join(notes) + '. Scan is Partial.'
+            scan.progress = f"Completed with {len(aborted)} aborted, {len(inconclusive)} inconclusive job(s)"
         else:
             scan.progress = "Completed"
         scan.end_time = datetime.utcnow()
+
+
+@celery.task
+def check_agent_heartbeats():
+    """Orchestration doc §22: agents whose last heartbeat is older than
+    AGENT_HEARTBEAT_TIMEOUT_SECONDS are marked offline, so scheduler_tick's
+    `Agent.query.filter_by(type=..., status='online')` never hands work to
+    a process that's actually dead. Runs every 30s -- frequent enough that
+    a genuinely crashed agent is caught within one heartbeat-timeout
+    window, not several scheduler ticks later.
+    """
+    from app import create_app, db
+    from models import Agent
+
+    app = create_app()
+    with app.app_context():
+        cutoff = datetime.utcnow() - timedelta(seconds=AGENT_HEARTBEAT_TIMEOUT_SECONDS)
+        stale = Agent.query.filter(Agent.status == 'online', Agent.last_seen < cutoff).all()
+        for agent in stale:
+            agent.status = 'offline'
+        if stale:
+            db.session.commit()
 
 
 @celery.task
@@ -271,6 +313,14 @@ def execute_scan_job(self, job_id, lock_token):
             # §5.1-5.3); everything downstream targets the ports it finds.
             open_ports = _run_nmap_scan(scan.id, asset.id, target, db, Finding)
 
+            # PCI §5.5: multiple DNS A records for this asset's hostname
+            # is the standard load-balancer signal. Needs a real hostname
+            # (not just an IP) to be meaningful, and only applies to
+            # external scans -- internal assets are typically addressed
+            # by IP directly, without a public-facing load balancer.
+            if scan.type == 'external' and asset.hostname:
+                _check_load_balancer(scan.id, asset.id, asset.hostname, db, Finding)
+
             # PCI §6.1: known vendor default accounts/passwords, tested
             # (not brute-forced) against services Nmap found open.
             _run_default_creds_check(scan.id, asset.id, target, open_ports, db, Finding)
@@ -278,6 +328,7 @@ def execute_scan_job(self, job_id, lock_token):
             if scan.type == 'external':
                 _run_testssl_scan(scan.id, asset.id, target, open_ports, db, Finding)
                 _run_zap_scan(scan.id, asset.id, target, open_ports, db, Finding)
+                _run_payment_script_check(scan.id, asset.id, target, open_ports, db, Finding)
                 _run_nuclei_scan(scan.id, asset.id, target, db, Finding)
                 _run_openvas_scan(scan.id, asset.id, target, db, Finding)
             else:
@@ -440,7 +491,7 @@ def _run_nmap_scan(scan_id, asset_id, target, db, Finding):
     zone-transfer scripts. Returns the list of open ports so downstream tools
     (testssl.sh, ZAP) know what to target instead of re-discovering it.
     """
-    from models import Scan
+    from models import Scan, ScanJob
     scan = Scan.query.get(scan_id)
     scan.progress = f"Running Nmap discovery on {target}..."
     scan.progress_percent = 10
@@ -476,6 +527,63 @@ def _run_nmap_scan(scan_id, asset_id, target, db, Finding):
             os_match = host.find('.//osmatch')
             os_name = os_match.get('name') if os_match is not None else None
 
+            # PCI §6.8/§7/§14: "If active protection systems dynamically
+            # block ASV traffic... it results in an inconclusive scan...
+            # the ASV must record the scan as a failure and describe the
+            # interference." A stateful firewall/IPS silently dropping
+            # probes (rather than responding with a real open/closed
+            # state) shows up as most-or-all ports coming back 'filtered'
+            # -- a live, unprotected host normally resolves the vast
+            # majority of its 65535 ports to a definitive open/closed
+            # state. The 100-port floor avoids flagging narrow/manual
+            # scans where a handful of filtered ports is unremarkable.
+            all_ports = host.findall('.//port')
+            total_scanned = len(all_ports)
+            filtered_count = sum(
+                1 for p in all_ports
+                if p.find('state') is not None and p.find('state').get('state') == 'filtered'
+            )
+            host_status = host.find('status')
+            host_is_down = host_status is not None and host_status.get('state') == 'down'
+
+            inconclusive_reason = None
+            if host_is_down:
+                inconclusive_reason = "Host did not respond to any probes -- traffic appears to have been silently dropped."
+            elif total_scanned >= 100:
+                filtered_ratio = filtered_count / total_scanned
+                if filtered_ratio >= FILTERED_RATIO_INCONCLUSIVE_THRESHOLD:
+                    inconclusive_reason = (
+                        f"{filtered_count}/{total_scanned} scanned ports ({filtered_ratio:.0%}) "
+                        f"returned 'filtered' rather than a definitive open/closed state."
+                    )
+
+            if inconclusive_reason:
+                db.session.add(_make_finding(
+                    db, Finding, scan_id=scan.id, asset_id=asset_id, severity='High', cve='',
+                    description=(
+                        f"Inconclusive scan (§6.8/§7): {inconclusive_reason} This pattern indicates "
+                        f"an active protection system (WAF/IPS/firewall) is blocking or filtering "
+                        f"ASV scan traffic. Per PCI reference doc §7, an inconclusive scan must be "
+                        f"recorded as an automatic failure until resolved."
+                    ),
+                    recommendation=(
+                        "Temporarily configure active protection systems to monitor/log-only for "
+                        "the ASV's scanning IP addresses, or provide written evidence the scan "
+                        "wasn't blocked, or establish a secure tunnel / install a local scanning "
+                        "appliance behind the block."
+                    ),
+                    source_tool='nmap', is_auto_fail=True
+                ))
+                job = ScanJob.query.filter_by(scan_id=scan_id, asset_id=asset_id).first()
+                if job:
+                    # Not retried -- re-running Nmap against the same
+                    # firewall produces the same result, so this doesn't
+                    # burn the job's retry attempts the way a transient
+                    # tool crash does. The job still "completes"; the
+                    # auto-fail finding above is the actual outcome.
+                    job.is_inconclusive = True
+                db.session.commit()
+
             for port_el in host.findall('.//port'):
                 state = port_el.find('state')
                 if state is None or state.get('state') != 'open':
@@ -487,6 +595,28 @@ def _run_nmap_scan(scan_id, asset_id, target, db, Finding):
                 service_name = service_el.get('name') if service_el is not None else 'unknown'
 
                 open_ports.append({'port': port_id, 'proto': proto, 'service': service_name})
+
+                # PCI §6.7: "If the ASV detects open ports but cannot
+                # remotely fingerprint or identify the protocol or
+                # service, it must flag them as 'unknown services'."
+                # Nmap itself uses the literal string 'unknown' (or omits
+                # the <service> element entirely) when -sV can't identify
+                # what's listening -- this was previously discarded
+                # silently since it doesn't match any of the specific
+                # checks below.
+                if service_name in ('unknown', 'tcpwrapped') or service_el is None:
+                    db.session.add(_make_finding(
+                        db, Finding, scan_id=scan.id, asset_id=asset_id, severity='Low', cve='',
+                        description=(
+                            f"Unknown service on port {port_id}/{proto} -- Nmap could not remotely "
+                            f"fingerprint the protocol or application listening on this port."
+                        ),
+                        recommendation=(
+                            "Investigate to rule out malware/rootkits; justify the business need for "
+                            "this port and confirm secure implementation, or disable it if unused."
+                        ),
+                        source_tool='nmap', is_auto_fail=False
+                    ))
 
                 # PCI 1.4.4 / §6.6 — databases exposed to the Internet: auto-fail
                 if port_id in DB_PORTS:
@@ -597,6 +727,16 @@ def _run_testssl_scan(scan_id, asset_id, target, open_ports, db, Finding):
     # PCI DSS explicit automatic-fail protocols (§6.2, §7): SSLv2/v3, TLS 1.0/1.1.
     AUTO_FAIL_PROTOCOL_IDS = {'SSLv2', 'SSLv3', 'TLS1', 'TLS1_1'}
 
+    def _testssl_indicates_present(text):
+        """testssl.sh consistently phrases a clean result as 'not
+        offered'/'not vulnerable' and a hit as 'offered'/'VULNERABLE' --
+        same presence heuristic the early-TLS-protocol check above
+        already relies on, generalized here for the ADH/SHA-1 checks."""
+        t = text.lower()
+        if 'not offered' in t or 'not vulnerable' in t:
+            return False
+        return 'offered' in t or 'vulnerable' in t
+
     for port in tls_ports:
         tmp = tempfile.NamedTemporaryFile(suffix='.json', delete=False)
         json_path = tmp.name
@@ -613,11 +753,12 @@ def _run_testssl_scan(scan_id, asset_id, target, open_ports, db, Finding):
                 entry_id = entry.get('id', '')
                 severity_raw = entry.get('severity', 'INFO').upper()
                 finding_text = entry.get('finding', '')
+                text_lower = finding_text.lower()
 
                 is_early_protocol_offered = (
                     entry_id in AUTO_FAIL_PROTOCOL_IDS
-                    and 'not offered' not in finding_text.lower()
-                    and 'offered' in finding_text.lower()
+                    and 'not offered' not in text_lower
+                    and 'offered' in text_lower
                 )
 
                 if severity_raw in ('CRITICAL', 'HIGH') or is_early_protocol_offered:
@@ -628,6 +769,41 @@ def _run_testssl_scan(scan_id, asset_id, target, open_ports, db, Finding):
                         recommendation="Disable SSL/early TLS; support TLS 1.2+ only with strong cipher suites.",
                         source_tool='testssl',
                         is_auto_fail=is_early_protocol_offered
+                    ))
+                    continue
+
+                # §6.2 Special Notes: these are typically MEDIUM/LOW (or
+                # even INFO) in testssl.sh's own severity scale, so the
+                # CRITICAL/HIGH filter above silently dropped every one of
+                # them -- they were never becoming findings at all, not
+                # even visible ones. Not an auto-fail condition per the
+                # reference doc; still a real finding a customer needs to
+                # see and justify/remediate.
+                is_adh = ('adh' in text_lower or 'aecdh' in text_lower) and _testssl_indicates_present(finding_text)
+                is_deprecated_crypto = (
+                    ('sha1' in text_lower.replace('-', '').replace(' ', '') or 'sha-1' in text_lower)
+                    and _testssl_indicates_present(finding_text)
+                )
+
+                if is_adh:
+                    db.session.add(_make_finding(
+                        db, Finding, scan_id=scan.id, asset_id=asset_id, severity='Medium', cve='',
+                        description=(
+                            f"testssl.sh [{entry_id}] on port {port}: {finding_text} -- Special Note (§6.2): "
+                            f"Anonymous Diffie-Hellman key exchange increases man-in-the-middle risk."
+                        ),
+                        recommendation="Disable ADH/AECDH cipher suites; require authenticated key exchange.",
+                        source_tool='testssl', is_auto_fail=False
+                    ))
+                elif is_deprecated_crypto:
+                    db.session.add(_make_finding(
+                        db, Finding, scan_id=scan.id, asset_id=asset_id, severity='Medium', cve='',
+                        description=(
+                            f"testssl.sh [{entry_id}] on port {port}: {finding_text} -- Special Note (§6.2): "
+                            f"industry-deprecated cryptographic algorithm (SHA-1) in use."
+                        ),
+                        recommendation="Reissue certificates/configure services to use SHA-256 or stronger.",
+                        source_tool='testssl', is_auto_fail=False
                     ))
 
             db.session.commit()
@@ -730,6 +906,149 @@ def _run_zap_scan(scan_id, asset_id, target, open_ports, db, Finding):
     except Exception as e:
         # Non-fatal by design — see docstring.
         print(f"ZAP scan error for {target_url}: {e}")
+
+
+# Common tag-management/analytics/advertising script hosts. §6.5 is about
+# ANY third-party script executing in the consumer's browser, not just
+# these -- this list catches the overwhelmingly common cases (matches the
+# same "curated, not exhaustive" approach as default_creds.py's vendor
+# list) so a real hit doesn't get lost in noise from every <script> tag
+# on the page.
+PAYMENT_SCRIPT_HOST_PATTERNS = (
+    'googletagmanager.com', 'google-analytics.com', 'googlesyndication.com',
+    'doubleclick.net', 'facebook.net', 'connect.facebook.net', 'hotjar.com',
+    'segment.com', 'segment.io', 'mixpanel.com', 'fullstory.com',
+    'clarity.ms', 'criteo.com', 'adroll.com', 'taboola.com', 'outbrain.com',
+    'tiktok.com/i18n', 'analytics.tiktok.com', 'snap.licdn.com',
+    'bat.bing.com', 'amplitude.com', 'intercom.io', 'drift.com',
+)
+
+
+def _run_payment_script_check(scan_id, asset_id, target, open_ports, db, Finding):
+    """PCI §6.5 (exact wording): 'The ASV scan must detect scripts loaded
+    and executed in the consumer's browser (e.g., advertising, tracking,
+    tag management systems). Detection triggers a Special Note requiring
+    the customer to justify the business need and ensure explicit
+    authorization/secure implementation... relates to PCI DSS Requirements
+    6.4.3 and 11.6.1.'
+
+    Uses a real headless browser (same Playwright dependency discovery.py
+    already needs for JS-redirect tracking) rather than static HTML
+    parsing, because §6.5 explicitly means scripts that actually EXECUTE
+    in the browser -- many tag-manager scripts are injected dynamically
+    by other scripts, not present in the page's raw HTML at all.
+    """
+    from models import Scan
+    scan = Scan.query.get(scan_id)
+
+    web_ports = [p['port'] for p in open_ports if p['port'] in WEB_PORTS or p['service'] in ('http', 'https')]
+    if not web_ports:
+        return
+
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        print("Playwright not installed -- skipping payment page script check (§6.5)")
+        return
+
+    scan.progress = f"Checking for third-party page scripts on {target}..."
+    db.session.commit()
+
+    seen_hosts = set()
+    for port in web_ports:
+        scheme = 'https' if port in TLS_PORTS else 'http'
+        port_suffix = '' if port in (80, 443) else f':{port}'
+        url = f"{scheme}://{target}{port_suffix}"
+
+        try:
+            with sync_playwright() as p:
+                browser = p.chromium.launch()
+                try:
+                    page = browser.new_page(ignore_https_errors=True)
+                    page.goto(url, timeout=15000, wait_until='networkidle')
+                    script_srcs = page.eval_on_selector_all('script[src]', 'els => els.map(e => e.src)')
+                finally:
+                    browser.close()
+        except Exception as e:
+            print(f"Payment script check failed for {url}: {e}")
+            continue
+
+        from urllib.parse import urlparse
+        for src in script_srcs:
+            host = urlparse(src).hostname or ''
+            matched = next((pat for pat in PAYMENT_SCRIPT_HOST_PATTERNS if pat in host), None)
+            if matched and host not in seen_hosts:
+                seen_hosts.add(host)
+                db.session.add(_make_finding(
+                    db, Finding, scan_id=scan.id, asset_id=asset_id, severity='Low', cve='',
+                    description=(
+                        f"Third-party script executing in the browser on port {port}: {host} "
+                        f"({src[:200]}). Special Note (§6.5): tag management/advertising/tracking "
+                        f"scripts require business justification and secure implementation per "
+                        f"PCI DSS Requirements 6.4.3 and 11.6.1."
+                    ),
+                    recommendation=(
+                        "Confirm business need for this script, verify it is explicitly authorized, "
+                        "and ensure it is loaded securely (integrity checking, restricted scope)."
+                    ),
+                    source_tool='payment-script-check', is_auto_fail=False
+                ))
+    if seen_hosts:
+        db.session.commit()
+
+
+def _check_load_balancer(scan_id, asset_id, hostname, db, Finding):
+    """PCI §5.5 (Load Balancer Handling), localized-load-balancer half:
+    'The ASV must obtain documented assurance from the customer that the
+    infrastructure behind the load balancer is completely synchronized...
+    If the customer cannot validate synchronization, the ASV must add a
+    Special Note stating the customer is responsible for scanning the
+    backend environment internally.'
+
+    Detection: multiple DNS A records for one hostname is the standard
+    signal of round-robin load balancing across backend servers -- this
+    scan only ever reaches whichever single IP its own DNS resolution
+    happens to return, so any OTHER backend behind the same hostname is
+    invisible to it by construction.
+
+    NOT implemented: §5.5's external/regional load-balancer half, which
+    requires querying from multiple geographic vantage points to detect
+    (a single-location scanner structurally can't observe that a
+    different region gets routed to a different IP). Documented
+    limitation, not a silent gap -- same honesty pattern as discovery.py's
+    crawl-depth note.
+    """
+    if not hostname:
+        return
+
+    import discovery
+    from models import Scan
+    scan = Scan.query.get(scan_id)
+
+    try:
+        ips = discovery.resolve_all_a_records(hostname)
+    except Exception as e:
+        print(f"Load balancer check failed for {hostname}: {e}")
+        return
+
+    if len(ips) > 1:
+        db.session.add(_make_finding(
+            db, Finding, scan_id=scan.id, asset_id=asset_id, severity='Low', cve='',
+            description=(
+                f"Special Note (§5.5): {hostname} resolves to {len(ips)} distinct IP addresses "
+                f"({', '.join(ips)}), indicating this hostname sits behind a load balancer. This "
+                f"scan reaches only whichever backend its own DNS resolution returned -- other "
+                f"backend(s) behind the same hostname were not directly scanned."
+            ),
+            recommendation=(
+                "Provide documented assurance that all backend servers behind this load balancer "
+                "are configuration-synchronized, or ensure each backend IP is scanned individually "
+                "(e.g. as part of internal vulnerability scanning); per §5.5 this is the customer's "
+                "responsibility if synchronization cannot be validated."
+            ),
+            source_tool='discovery', is_auto_fail=False
+        ))
+        db.session.commit()
 
 
 def _get_gvm_connection():
