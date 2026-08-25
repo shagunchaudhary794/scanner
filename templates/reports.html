@@ -9,6 +9,7 @@
         <div class="flex gap-3 flex-wrap">
             {% if current_user.is_asv_staff %}
             <form action="{{ url_for('main.generate_full_report') }}" method="POST" class="flex gap-2 items-center">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <select name="scan_id" required class="glacier-recessed-sm text-slate-700 text-xs px-3 py-1.5 outline-none border-none focus:ring-1 focus:ring-glacier-blue/50">
                     <option value="" disabled selected>Select completed scan...</option>
                     {% for scan in completed_scans %}
@@ -21,6 +22,7 @@
             </form>
             {% endif %}
             <form action="{{ url_for('main.generate_report') }}" method="POST" class="flex gap-2 items-center">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <select name="scan_id" required class="glacier-recessed-sm text-slate-700 text-xs px-3 py-1.5 outline-none border-none focus:ring-1 focus:ring-glacier-blue/50">
                     <option value="" disabled selected>Select scan...</option>
                     {% for scan in completed_scans %}
