@@ -56,6 +56,27 @@ COMMON_SUBDOMAINS = [
 MAX_REDIRECT_HOPS = 10
 
 
+def resolve_all_a_records(hostname):
+    """§5.5 Load Balancer Handling: multiple A records for one hostname is
+    the standard signal of DNS round-robin across backend servers.
+    resolve_a_record() above (via socket.gethostbyname) only returns ONE
+    address even when several exist -- this returns all of them.
+    """
+    if _HAVE_DNSPYTHON:
+        try:
+            answers = dns.resolver.resolve(hostname, 'A', lifetime=TIMEOUT)
+            return sorted(str(r) for r in answers)
+        except Exception:
+            return []
+    # Fallback without dnspython: gethostbyname_ex also returns every
+    # address it knows about, unlike plain gethostbyname.
+    try:
+        _, _, addrs = socket.gethostbyname_ex(hostname)
+        return sorted(addrs)
+    except socket.gaierror:
+        return []
+
+
 def resolve_a_record(hostname):
     """§4.4 point 1: resolve a customer-provided domain's IP so it's on
     record as disclosed. Returns IP string or None."""
