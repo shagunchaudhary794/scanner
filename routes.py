@@ -9,7 +9,7 @@ import pdfkit
 from werkzeug.utils import secure_filename
 from models import (Asset, Scan, ScanTarget, Finding, Agent, Report, Dispute,
                      AsvProfile, Organization, User, AuditLog)
-from app import db
+from app import db, csrf
 import discovery
 import re
 
@@ -151,15 +151,33 @@ def login():
         password = request.form.get('password', '')
         user = User.query.filter_by(email=email).first()
 
+        # Checked before the password so a locked account never even
+        # exercises the password hash comparison while locked -- avoids
+        # both wasted work and giving a timing signal.
+        if user is not None and user.is_locked_out:
+            remaining = max(1, int((user.locked_until - datetime.utcnow()).total_seconds() // 60) + 1)
+            flash(f'Account locked due to repeated failed logins. Try again in {remaining} minute(s).', 'error')
+            _log_audit('LOGIN_BLOCKED_LOCKOUT', entity_type='User', entity_id=user.id)
+            return render_template('login.html')
+
         if user is None or not user.check_password(password):
+            if user is not None:
+                user.register_failed_login()
+                db.session.commit()
+                if user.is_locked_out:
+                    _log_audit('ACCOUNT_LOCKED', entity_type='User', entity_id=user.id,
+                               details=f'{user.failed_login_attempts} failed attempts')
+            # Same generic message whether the email doesn't exist or the
+            # password was wrong -- doesn't reveal which one to a guesser.
             flash('Invalid email or password.', 'error')
             return render_template('login.html')
+
         if not user.is_active_user:
             flash('This account has been deactivated.', 'error')
             return render_template('login.html')
 
+        user.register_successful_login()
         login_user(user)
-        user.last_login_at = datetime.utcnow()
         db.session.commit()
         _log_audit('LOGIN', entity_type='User', entity_id=user.id)
         return redirect(url_for('index'))
@@ -410,6 +428,61 @@ def update_scope(id):
     db.session.commit()
     _log_audit('SCOPE_UPDATED', entity_type='Asset', entity_id=asset.id, details=action)
     flash('Scope updated.', 'success')
+    return redirect(url_for('main.asset_detail', id=id))
+
+
+@bp.route('/assets/<int:id>/hosting', methods=['POST'])
+@roles_required('admin', 'analyst')
+def update_hosting(id):
+    """§5.7/§14: 'In a shared hosting or multi-tenant environment, the
+    customer could be compromised by weaknesses in another tenant's
+    setup. To comply, there are only two valid options: the provider
+    undergoes ASV scans independently and provides passing evidence
+    directly to the customer, or the provider's infrastructure is
+    included in the customer's own ASV scans.'
+
+    Same pattern as segmentation-attestation exclusion: a bare checkbox
+    claiming 'shared hosting, handled' proves nothing, so at least an
+    evidence file or a substantive written note is required -- refused
+    outright otherwise, not silently accepted.
+    """
+    asset = Asset.query.get_or_404(id)
+    if not current_user.can_access_organization(asset.organization_id):
+        flash('You do not have access to that component.', 'error')
+        return redirect(url_for('main.assets'))
+
+    action = request.form.get('action')
+
+    if action == 'mark_shared':
+        note = request.form.get('hosting_evidence_note', '').strip()
+        provider_name = request.form.get('hosting_provider_name', '').strip()
+
+        evidence_file_path = None
+        uploaded = request.files.get('hosting_evidence_file')
+        if uploaded and uploaded.filename:
+            upload_dir = current_app.config['EVIDENCE_UPLOAD_FOLDER']
+            os.makedirs(upload_dir, exist_ok=True)
+            safe_name = f"{uuid.uuid4().hex}_{secure_filename(uploaded.filename)}"
+            uploaded.save(os.path.join(upload_dir, safe_name))
+            evidence_file_path = safe_name
+
+        if not note and not evidence_file_path:
+            flash('Either a written note or an evidence file is required to document shared-hosting compliance (PCI §5.7).', 'error')
+            return redirect(url_for('main.asset_detail', id=id))
+
+        asset.is_shared_hosting = True
+        asset.hosting_provider_name = provider_name or None
+        asset.hosting_evidence_note = note or None
+        if evidence_file_path:
+            asset.hosting_evidence_file_path = evidence_file_path
+    elif action == 'unmark_shared':
+        asset.is_shared_hosting = False
+        # Evidence stays on record even after unmarking -- same
+        # historical-record rationale as segmentation attestations above.
+
+    db.session.commit()
+    _log_audit('HOSTING_EVIDENCE_UPDATED', entity_type='Asset', entity_id=asset.id, details=action)
+    flash('Shared hosting status updated.', 'success')
     return redirect(url_for('main.asset_detail', id=id))
 
 
@@ -969,6 +1042,7 @@ def generate_full_report():
 # ---------------------------------------------------------------------------
 
 @bp.route('/api/agents/heartbeat', methods=['POST'])
+@csrf.exempt
 def agent_heartbeat():
     data = request.json
     agent_name = data.get('name')
