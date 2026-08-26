@@ -38,3 +38,10 @@ class Config:
         'EVIDENCE_UPLOAD_FOLDER', os.path.join(basedir, 'evidence_uploads')
     )
     MAX_CONTENT_LENGTH = 16 * 1024 * 1024  # 16MB cap on evidence uploads
+
+    # Generated report storage (report_storage.py; §44 Report Storage
+    # Architecture). Local disk for the MVP -- production should point
+    # this at S3/MinIO the same way EVIDENCE_UPLOAD_FOLDER above should.
+    REPORTS_STORAGE_FOLDER = os.environ.get(
+        'REPORTS_STORAGE_FOLDER', os.path.join(basedir, 'generated_reports')
+    )
