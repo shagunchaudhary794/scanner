@@ -11,6 +11,7 @@ from models import (Asset, Scan, ScanTarget, Finding, Agent, Report, Dispute,
                      AsvProfile, Organization, User, AuditLog)
 from app import db, csrf
 import discovery
+import report_storage
 import re
 
 from datetime import datetime, timedelta
@@ -919,7 +920,11 @@ def generate_report():
                 'Yes' if f.is_auto_fail else 'No', f.description, f.recommendation, f.created_at
             ])
 
-        output = make_response(si.getvalue())
+        csv_bytes = si.getvalue().encode('utf-8')
+        report.file_path = report_storage.save(csv_bytes, 'csv')
+        db.session.commit()
+
+        output = make_response(csv_bytes)
         output.headers["Content-Disposition"] = f"attachment; filename=report_{report.id}.csv"
         output.headers["Content-type"] = "text/csv"
         return output
@@ -928,11 +933,16 @@ def generate_report():
         html = render_template('findings_pdf.html', findings=findings)
         try:
             pdf = pdfkit.from_string(html, False)
+            report.file_path = report_storage.save(pdf, 'pdf')
+            db.session.commit()
+
             output = make_response(pdf)
             output.headers["Content-Disposition"] = f"attachment; filename=report_{report.id}.pdf"
             output.headers["Content-type"] = "application/pdf"
             return output
         except Exception as e:
+            report.status = 'failed'
+            db.session.commit()
             flash(f"PDF generation failed: {e}")
             return redirect(url_for('main.reports'))
 
@@ -1026,6 +1036,9 @@ def generate_full_report():
 
     try:
         pdf = pdfkit.from_string(html, False)
+        report.file_path = report_storage.save(pdf, 'pdf')
+        db.session.commit()
+
         output = make_response(pdf)
         output.headers["Content-Disposition"] = f"attachment; filename=pci_report_scan_{scan.id}.pdf"
         output.headers["Content-type"] = "application/pdf"
@@ -1035,6 +1048,34 @@ def generate_full_report():
         db.session.commit()
         flash(f"PDF generation failed: {e}", 'error')
         return redirect(url_for('main.reports'))
+
+
+@bp.route('/reports/<int:id>/download')
+@login_required
+def download_report(id):
+    """§44 Report Storage Architecture: re-serves a report EXACTLY as it
+    was generated, from report_storage.py, rather than regenerating it.
+    This distinction matters -- a regenerated report could come out
+    different if a finding's dispute was decided (or a new one filed)
+    since the original was issued, which would silently rewrite history.
+    A stored report is the actual historical record.
+    """
+    report = Report.query.get_or_404(id)
+    if not current_user.can_access_organization(report.organization_id):
+        flash('You do not have access to that report.', 'error')
+        return redirect(url_for('main.reports'))
+
+    content = report_storage.load(report.file_path)
+    if content is None:
+        flash('This report\'s stored file is no longer available. Generate a new one.', 'error')
+        return redirect(url_for('main.reports'))
+
+    mimetype = 'application/pdf' if report.format == 'pdf' else 'text/csv'
+    filename = f"report_{report.id}.{report.format}"
+    output = make_response(content)
+    output.headers["Content-Disposition"] = f"attachment; filename={filename}"
+    output.headers["Content-type"] = mimetype
+    return output
 
 
 # ---------------------------------------------------------------------------
