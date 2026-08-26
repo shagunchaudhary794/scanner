@@ -48,7 +48,8 @@
                     <th class="pb-3 px-4 font-semibold">Result</th>
                     <th class="pb-3 px-4 font-semibold">Status</th>
                     <th class="pb-3 px-4 font-semibold">Expires</th>
-                    <th class="pb-3 px-4 font-semibold text-right">Date</th>
+                    <th class="pb-3 px-4 font-semibold">Date</th>
+                    <th class="pb-3 px-4 font-semibold text-right">File</th>
                 </tr>
             </thead>
             <tbody>
@@ -66,17 +67,28 @@
                         {% endif %}
                     </td>
                     <td class="py-4 px-4 text-xs text-slate-600 capitalize">
+                        {% if report.status == 'failed' %}
+                        <span class="px-2.5 py-1 text-[10px] font-bold text-glacier-red border border-glacier-red/30 rounded-md bg-glacier-red/10 uppercase tracking-wide">{{ report.status }}</span>
+                        {% else %}
                         <span class="px-2.5 py-1 text-[10px] font-bold text-glacier-green border border-glacier-green/30 rounded-md bg-glacier-green/10 uppercase tracking-wide">{{ report.status }}</span>
+                        {% endif %}
                     </td>
                     <td class="py-4 px-4 text-xs {% if report.is_expired %}text-glacier-red{% else %}text-slate-500{% endif %} font-mono">
                         {{ report.expires_at.strftime('%Y-%m-%d') if report.expires_at else '—' }}
                     </td>
-                    <td class="py-4 px-4 text-right font-mono text-xs text-slate-500 rounded-r-xl">
+                    <td class="py-4 px-4 font-mono text-xs text-slate-500">
                         {{ report.created_at.strftime('%Y-%m-%d %H:%M') }}
+                    </td>
+                    <td class="py-4 px-4 text-right rounded-r-xl">
+                        {% if report.file_path %}
+                        <a href="{{ url_for('main.download_report', id=report.id) }}" class="text-xs text-glacier-blue underline font-medium">Download</a>
+                        {% else %}
+                        <span class="text-xs text-slate-400">—</span>
+                        {% endif %}
                     </td>
                 </tr>
                 {% else %}
-                <tr><td colspan="6" class="py-4 px-4 text-slate-500 text-center">No reports generated yet.</td></tr>
+                <tr><td colspan="7" class="py-4 px-4 text-slate-500 text-center">No reports generated yet.</td></tr>
                 {% endfor %}
             </tbody>
         </table>
