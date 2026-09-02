@@ -1,3 +1,10 @@
 # Development-only dependencies (installed by ./dev.sh setup)
 watchdog>=4.0.0
 pytest>=8.0.0
+pytest-cov>=5.0.0
+
+# Test-only fakes -- fakeredis + lupa give lock_manager.py's real Lua
+# scripts (compare-and-delete release, renew) something to execute
+# against without a live Redis server. See tests/conftest.py.
+fakeredis>=2.23.0
+lupa>=2.1
