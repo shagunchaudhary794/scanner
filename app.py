@@ -51,20 +51,24 @@ def create_app(config_class=Config):
             from models import Agent
             db.create_all()
 
-            # Ensure MVP local agents exist and are online
+            # Ensure MVP local agents exist. Status is only set at
+            # CREATION time -- not on every call. This function runs
+            # inside every Celery task's own create_app() (scheduler_tick
+            # alone fires every 5s via Beat), so unconditionally forcing
+            # status='online' here would silently undo
+            # check_agent_heartbeats' stale-detection (and any future
+            # manual "mark offline" action) within one tick. Ongoing
+            # status belongs to /api/agents/heartbeat and
+            # check_agent_heartbeats, not to app boot.
             internal_agent = Agent.query.filter_by(name='Local Celery Worker').first()
             if not internal_agent:
                 internal_agent = Agent(name='Local Celery Worker', type='internal', status='online')
                 db.session.add(internal_agent)
-            else:
-                internal_agent.status = 'online'
 
             external_agent = Agent.query.filter_by(name='Local OpenVAS').first()
             if not external_agent:
                 external_agent = Agent(name='Local OpenVAS', type='external', status='online')
                 db.session.add(external_agent)
-            else:
-                external_agent.status = 'online'
 
             db.session.commit()
 
