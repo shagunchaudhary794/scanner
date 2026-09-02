@@ -13,7 +13,9 @@
 #   ./dev.sh worker           # run Celery worker with auto-reload (own terminal)
 #   ./dev.sh beat             # run Celery Beat scheduler (own terminal) -- required for scans to actually dispatch
 #   ./dev.sh logs             # follow infra + worker + beat logs
-#   ./dev.sh test             # smoke test against the local stack
+#   ./dev.sh test             # run the pytest suite (fast tests only, no live infra needed)
+#   ./dev.sh test-all         # run the full pytest suite, including slow real-network/browser tests
+#   ./dev.sh smoke            # smoke test against the local live stack (db/redis/zap/openvas reachability)
 #   ./dev.sh status           # show running infra containers
 #   ./dev.sh stop             # stop infra containers (keep data)
 #   ./dev.sh down             # stop and remove infra containers (keep data)
@@ -287,6 +289,20 @@ cmd_logs() {
 cmd_test() {
     require_venv
     local py; py="$(venv_python)"
+    info "Running pytest suite (tests/) -- no live infra required, uses a temp SQLite DB and fakeredis"
+    "${py}" -m pytest -m "not slow" "$@"
+}
+
+cmd_test_all() {
+    require_venv
+    local py; py="$(venv_python)"
+    info "Running full pytest suite INCLUDING slow tests (real DNS + real headless browser, needs network egress)"
+    "${py}" -m pytest "$@"
+}
+
+cmd_smoke() {
+    require_venv
+    local py; py="$(venv_python)"
     ensure_infra
     info "Running smoke test ..."
     "${py}" - <<'PY'
@@ -387,7 +403,9 @@ Commands:
   worker   run Celery worker only (auto-reload)
   beat     run Celery Beat scheduler only -- required for scans to actually dispatch
   logs     follow infra, worker, and beat logs
-  test     smoke test (app boots, DB reachable, Redis ping)
+  test     run the pytest suite (tests/) -- fast, no live infra needed
+  test-all run the pytest suite including slow real-network/browser tests
+  smoke    live-infra smoke test (app boots, DB reachable, Redis ping, tool connectivity)
   status   show infra container state
   stop     stop infra containers (keep data)
   down     stop and remove infra containers (keep data volumes)
@@ -418,7 +436,9 @@ case "${1:-help}" in
     worker) cmd_worker ;;
     beat) cmd_beat ;;
     logs) cmd_logs ;;
-    test) cmd_test ;;
+    test) shift; cmd_test "$@" ;;
+    test-all) shift; cmd_test_all "$@" ;;
+    smoke) cmd_smoke ;;
     status|ps) cmd_status ;;
     stop) cmd_stop ;;
     down) cmd_down ;;
